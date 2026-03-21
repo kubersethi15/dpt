@@ -621,6 +621,12 @@ function AdminContent({ profile }) {
   const { posts, loading, refresh } = usePosts(filterClient !== 'all' ? filterClient : null)
   const [selectedPost, setSelectedPost] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [viewMode, setViewMode] = useState('list') // 'list' or 'calendar'
+
+  // Quick action states
+  const [datePickerPostId, setDatePickerPostId] = useState(null)
+  const [datePickerAction, setDatePickerAction] = useState(null) // 'schedule' or 'post'
+  const [pickedDate, setPickedDate] = useState('')
 
   // Create form
   const [newClientId, setNewClientId] = useState('')
@@ -651,17 +657,79 @@ function AdminContent({ profile }) {
     refresh()
   }
 
-  const handleDelete = async (postId) => {
+  const handleDelete = async (postId, e) => {
+    e.stopPropagation()
     if (!confirm('Delete this post?')) return
     await supabase.from('posts').delete().eq('id', postId)
     setSelectedPost(null)
     refresh()
   }
 
+  // Quick status changes from the list
+  const quickStatus = async (postId, newStatus, e) => {
+    e.stopPropagation()
+    await supabase.from('posts').update({ status: newStatus }).eq('id', postId)
+    refresh()
+  }
+
+  // Schedule or mark posted with date
+  const openDatePicker = (postId, action, e) => {
+    e.stopPropagation()
+    setDatePickerPostId(postId)
+    setDatePickerAction(action)
+    setPickedDate(new Date().toISOString().split('T')[0])
+  }
+
+  const confirmDateAction = async () => {
+    if (!datePickerPostId || !pickedDate) return
+    const updates = datePickerAction === 'schedule'
+      ? { status: 'scheduled', scheduled_date: pickedDate }
+      : { status: 'posted', posted_date: pickedDate }
+    await supabase.from('posts').update(updates).eq('id', datePickerPostId)
+    setDatePickerPostId(null)
+    setPickedDate('')
+    refresh()
+  }
+
+  // Quick action buttons per status
+  const QuickActions = ({ post }) => {
+    const s = post.status
+    return (
+      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+        {s === 'draft' && <Btn v="orange" sz="sm" onClick={e => quickStatus(post.id, 'pending_review', e)}>Send for Review</Btn>}
+        {s === 'approved' && <Btn v="primary" sz="sm" onClick={e => openDatePicker(post.id, 'schedule', e)}>Schedule</Btn>}
+        {s === 'scheduled' && <Btn v="success" sz="sm" onClick={e => openDatePicker(post.id, 'post', e)}>Mark Posted</Btn>}
+        {s === 'changes_requested' && <Btn v="orange" sz="sm" onClick={e => quickStatus(post.id, 'pending_review', e)}>Resubmit</Btn>}
+        <Btn v="danger" sz="sm" onClick={e => handleDelete(post.id, e)}>✕</Btn>
+      </div>
+    )
+  }
+
+  // Calendar view - group posts by week
+  const calendarPosts = [...filtered].filter(p => p.scheduled_date || p.posted_date).sort((a, b) => {
+    const da = a.posted_date || a.scheduled_date || ''
+    const db = b.posted_date || b.scheduled_date || ''
+    return da.localeCompare(db)
+  })
+  const groupedByWeek = {}
+  calendarPosts.forEach(p => {
+    const d = new Date((p.posted_date || p.scheduled_date) + 'T00:00:00')
+    const weekStart = new Date(d)
+    weekStart.setDate(d.getDate() - d.getDay() + 1) // Monday
+    const key = weekStart.toISOString().split('T')[0]
+    const label = `Week of ${weekStart.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })} — ${new Date(weekStart.getTime() + 4 * 86400000).toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })}`
+    if (!groupedByWeek[key]) groupedByWeek[key] = { label, posts: [] }
+    groupedByWeek[key].posts.push(p)
+  })
+
   return (
     <div className="fade-in">
       <PageHeader title="Content Pipeline" subtitle={`${filtered.length} posts`}
-        action={<Btn onClick={() => setShowCreate(true)}>+ New Post</Btn>} />
+        action={<div style={{ display: 'flex', gap: 8 }}>
+          <Btn v={viewMode === 'list' ? 'primary' : 'secondary'} sz="sm" onClick={() => setViewMode('list')}>List</Btn>
+          <Btn v={viewMode === 'calendar' ? 'primary' : 'secondary'} sz="sm" onClick={() => setViewMode('calendar')}>Calendar</Btn>
+          <Btn onClick={() => setShowCreate(true)}>+ New Post</Btn>
+        </div>} />
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
@@ -677,7 +745,7 @@ function AdminContent({ profile }) {
         </select>
       </div>
 
-      {loading ? <Loader /> : filtered.length === 0 ? <EmptyState icon="✎" title="No posts yet" sub="Create your first post to get started" /> : (
+      {loading ? <Loader /> : filtered.length === 0 ? <EmptyState icon="✎" title="No posts yet" sub="Create your first post to get started" /> : viewMode === 'list' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {filtered.map(p => (
             <Card key={p.id} onClick={() => setSelectedPost(p)} style={{ padding: 16, cursor: 'pointer', transition: 'all 0.15s', border: `1px solid ${selectedPost?.id === p.id ? C.blue : C.g200}` }}>
@@ -691,21 +759,67 @@ function AdminContent({ profile }) {
                   <div style={{ fontSize: 13, color: C.g600, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                     {p.content}
                   </div>
-                  <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 12, color: C.g400 }}>
-                    <span>{p.platform}</span>
-                    <span>{p.content_type}</span>
-                    {p.scheduled_date && <span>📅 {new Date(p.scheduled_date + 'T00:00:00').toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })}</span>}
-                    {p.graphic_url && <span>🖼 Graphic</span>}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                    <div style={{ display: 'flex', gap: 16, fontSize: 12, color: C.g400 }}>
+                      <span>{p.platform}</span>
+                      <span>{p.content_type}</span>
+                      {p.scheduled_date && <span>📅 {new Date(p.scheduled_date + 'T00:00:00').toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })}</span>}
+                      {p.posted_date && <span>✓ Posted {new Date(p.posted_date + 'T00:00:00').toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })}</span>}
+                      {p.graphic_url && <span>🖼 Graphic</span>}
+                    </div>
+                    <QuickActions post={p} />
                   </div>
                 </div>
-                {<Btn v="danger" sz="sm" onClick={e => { e.stopPropagation(); handleDelete(p.id) }} style={{ flexShrink: 0 }}>✕</Btn>}
               </div>
             </Card>
+          ))}
+        </div>
+      ) : (
+        /* Calendar View */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          {Object.keys(groupedByWeek).length === 0 ? <EmptyState icon="▦" title="No dated posts" sub="Schedule or post content to see it on the calendar" /> :
+            Object.entries(groupedByWeek).sort(([a], [b]) => a.localeCompare(b)).map(([weekKey, { label, posts: weekPosts }]) => (
+            <div key={weekKey}>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 12, paddingBottom: 8, borderBottom: `2px solid ${C.g200}` }}>{label}</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {weekPosts.map(p => {
+                  const d = new Date((p.posted_date || p.scheduled_date) + 'T00:00:00')
+                  return (
+                    <div key={p.id} onClick={() => setSelectedPost(p)} style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: 14, background: C.white, borderRadius: 10, border: `1px solid ${C.g200}`, cursor: 'pointer' }}>
+                      <div style={{ width: 50, textAlign: 'center', flexShrink: 0 }}>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: C.blue, textTransform: 'uppercase' }}>{d.toLocaleDateString('en-AU', { weekday: 'short' })}</div>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: C.navy }}>{d.getDate()}</div>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                          <Avatar initials={p.profiles?.avatar_initials || '?'} size={24} />
+                          <span style={{ fontSize: 13, fontWeight: 600, color: C.g700 }}>{p.profiles?.full_name}</span>
+                          <Badge status={p.status} />
+                        </div>
+                        <div style={{ fontSize: 13, color: C.g600, display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.content}</div>
+                      </div>
+                      <QuickActions post={p} />
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
           ))}
         </div>
       )}
 
       {selectedPost && <PostDetail post={selectedPost} profile={profile} onClose={() => setSelectedPost(null)} onUpdate={() => { refresh(); setSelectedPost(null) }} />}
+
+      {/* Date Picker Modal */}
+      <Modal open={!!datePickerPostId} onClose={() => setDatePickerPostId(null)} title={datePickerAction === 'schedule' ? 'Schedule Post' : 'Mark as Posted'} width={400}>
+        <Field label={datePickerAction === 'schedule' ? 'Scheduled Date' : 'Posted Date'} value={pickedDate} onChange={setPickedDate} type="date" />
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
+          <Btn v="secondary" onClick={() => setDatePickerPostId(null)}>Cancel</Btn>
+          <Btn v={datePickerAction === 'schedule' ? 'primary' : 'success'} onClick={confirmDateAction} disabled={!pickedDate}>
+            {datePickerAction === 'schedule' ? 'Schedule' : 'Mark Posted'}
+          </Btn>
+        </div>
+      </Modal>
 
       {/* Create Modal */}
       <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Create Post" width={600}>
@@ -819,8 +933,19 @@ function AdminReports({ profile }) {
   const { data: reportData, loading, refresh } = useReportData(selClient)
   const [showAdd, setShowAdd] = useState(false)
   const [showReport, setShowReport] = useState(false)
+  const [showPostMetrics, setShowPostMetrics] = useState(false)
+  const [tab, setTab] = useState('weekly') // 'weekly' or 'posts'
 
-  // Form fields for adding data
+  // Date range for report
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+
+  // Posted posts in date range (for per-post metrics)
+  const [postedPosts, setPostedPosts] = useState([])
+  const [postMetrics, setPostMetrics] = useState({}) // { postId: { impressions, likes, ... } }
+  const [loadingPosts, setLoadingPosts] = useState(false)
+
+  // Form fields for weekly data
   const [wLabel, setWLabel] = useState('')
   const [wStart, setWStart] = useState('')
   const [wImpressions, setWImpressions] = useState('')
@@ -832,38 +957,79 @@ function AdminReports({ profile }) {
   const [wSearch, setWSearch] = useState('')
   const [saving, setSaving] = useState(false)
 
-  const handleSave = async () => {
+  const client = clients.find(c => c.id === selClient)
+
+  // Fetch posted posts in date range
+  const fetchPostedPosts = async () => {
+    if (!selClient || !dateFrom || !dateTo) return
+    setLoadingPosts(true)
+    const { data: posts } = await supabase
+      .from('posts')
+      .select('*, post_metrics(*)')
+      .eq('client_id', selClient)
+      .eq('status', 'posted')
+      .gte('posted_date', dateFrom)
+      .lte('posted_date', dateTo)
+      .order('posted_date', { ascending: true })
+
+    setPostedPosts(posts || [])
+
+    // Pre-fill existing metrics
+    const metrics = {}
+    ;(posts || []).forEach(p => {
+      if (p.post_metrics && p.post_metrics.length > 0) {
+        const m = p.post_metrics[0]
+        metrics[p.id] = { impressions: m.impressions || '', likes: m.likes || '', comments: m.comments || '', shares: m.shares || '', reposts: m.reposts || '', clicks: m.clicks || '', saves: m.saves || '', video_views: m.video_views || '', engagement_rate: m.engagement_rate || '', notes: m.notes || '' }
+      }
+    })
+    setPostMetrics(metrics)
+    setLoadingPosts(false)
+  }
+
+  useEffect(() => { if (selClient && dateFrom && dateTo) fetchPostedPosts() }, [selClient, dateFrom, dateTo])
+
+  const handleSaveWeekly = async () => {
     if (!selClient || !wStart) return
     setSaving(true)
     await supabase.from('report_data').upsert({
-      client_id: selClient,
-      week_label: wLabel || `Week of ${wStart}`,
-      week_start: wStart,
-      impressions: parseInt(wImpressions) || 0,
-      likes: parseInt(wLikes) || 0,
-      comments: parseInt(wComments) || 0,
-      shares: parseInt(wShares) || 0,
-      profile_views: parseInt(wProfileViews) || 0,
-      followers: parseInt(wFollowers) || 0,
-      search_appearances: parseInt(wSearch) || 0,
+      client_id: selClient, week_label: wLabel || `Week of ${wStart}`, week_start: wStart,
+      impressions: parseInt(wImpressions) || 0, likes: parseInt(wLikes) || 0, comments: parseInt(wComments) || 0,
+      shares: parseInt(wShares) || 0, profile_views: parseInt(wProfileViews) || 0,
+      followers: parseInt(wFollowers) || 0, search_appearances: parseInt(wSearch) || 0,
     }, { onConflict: 'client_id,week_start' })
     setShowAdd(false)
-    clearForm()
+    setWLabel(''); setWStart(''); setWImpressions(''); setWLikes(''); setWComments(''); setWShares(''); setWProfileViews(''); setWFollowers(''); setWSearch('')
     setSaving(false)
     refresh()
   }
 
-  const clearForm = () => { setWLabel(''); setWStart(''); setWImpressions(''); setWLikes(''); setWComments(''); setWShares(''); setWProfileViews(''); setWFollowers(''); setWSearch('') }
-
-  const client = clients.find(c => c.id === selClient)
-
-  // Report generation
-  const generateReport = () => {
-    if (reportData.length === 0) return
-    setShowReport(true)
+  const updatePostMetric = (postId, field, value) => {
+    setPostMetrics(prev => ({ ...prev, [postId]: { ...(prev[postId] || {}), [field]: value } }))
   }
 
-  // Calculate KPIs for report
+  const savePostMetrics = async (postId) => {
+    const m = postMetrics[postId]
+    if (!m) return
+    await supabase.from('post_metrics').upsert({
+      post_id: postId,
+      impressions: parseInt(m.impressions) || 0, likes: parseInt(m.likes) || 0,
+      comments: parseInt(m.comments) || 0, shares: parseInt(m.shares) || 0,
+      reposts: parseInt(m.reposts) || 0, clicks: parseInt(m.clicks) || 0,
+      saves: parseInt(m.saves) || 0, video_views: parseInt(m.video_views) || 0,
+      engagement_rate: parseFloat(m.engagement_rate) || 0, notes: m.notes || '',
+    }, { onConflict: 'post_id' })
+  }
+
+  const saveAllPostMetrics = async () => {
+    setSaving(true)
+    for (const postId of Object.keys(postMetrics)) {
+      await savePostMetrics(postId)
+    }
+    setSaving(false)
+    fetchPostedPosts()
+  }
+
+  // Report KPIs
   const totalImps = reportData.reduce((s, d) => s + (d.impressions || 0), 0)
   const totalEng = reportData.reduce((s, d) => s + (d.likes || 0) + (d.comments || 0) + (d.shares || 0), 0)
   const avgEngRate = totalImps ? ((totalEng / totalImps) * 100).toFixed(1) : '0'
@@ -871,53 +1037,129 @@ function AdminReports({ profile }) {
   const firstFollowers = reportData.length ? reportData[0].followers : 0
   const followerGrowth = firstFollowers ? (((latestFollowers - firstFollowers) / firstFollowers) * 100).toFixed(0) : 0
 
+  const metricFields = ['impressions', 'likes', 'comments', 'shares', 'reposts', 'clicks', 'saves', 'video_views']
+
   return (
     <div className="fade-in">
-      <PageHeader title="Reports" subtitle="Enter LinkedIn metrics and generate client reports" />
+      <PageHeader title="Reports" subtitle="Weekly account metrics + per-post performance" />
 
-      <div style={{ marginBottom: 20 }}>
-        <Sel label="Select Client" value={selClient} onChange={setSelClient}
-          options={[{ value: '', label: 'Choose a client...' }, ...clients.map(c => ({ value: c.id, label: `${c.full_name} — ${c.company || ''}` }))]} />
-      </div>
+      <Sel label="Select Client" value={selClient} onChange={v => { setSelClient(v); setPostedPosts([]) }}
+        options={[{ value: '', label: 'Choose a client...' }, ...clients.map(c => ({ value: c.id, label: `${c.full_name} — ${c.company || ''}` }))]} />
 
       {selClient && (
         <>
-          <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-            <Btn onClick={() => setShowAdd(true)}>+ Add Weekly Data</Btn>
-            <Btn v="orange" onClick={generateReport} disabled={reportData.length === 0}>Generate Report</Btn>
+          {/* Tabs */}
+          <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `2px solid ${C.g200}`, paddingBottom: 0 }}>
+            {[{ id: 'weekly', label: 'Weekly Account Data' }, { id: 'posts', label: 'Per-Post Metrics' }].map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)} style={{
+                padding: '10px 20px', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                background: tab === t.id ? C.white : 'transparent', color: tab === t.id ? C.navy : C.g400,
+                borderBottom: tab === t.id ? `3px solid ${C.blue}` : '3px solid transparent', marginBottom: -2,
+              }}>{t.label}</button>
+            ))}
           </div>
 
-          {loading ? <Loader /> : reportData.length === 0 ? <EmptyState icon="▤" title="No data yet" sub="Add weekly LinkedIn metrics to generate reports" /> : (
-            <Card style={{ overflow: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ background: C.navy, color: C.white }}>
-                    {['Week', 'Impressions', 'Likes', 'Comments', 'Shares', 'Profile Views', 'Followers', 'Search'].map(h => (
-                      <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {reportData.map((d, i) => (
-                    <tr key={d.id} style={{ background: i % 2 ? C.g50 : C.white, borderBottom: `1px solid ${C.g200}` }}>
-                      <td style={{ padding: '10px 14px', fontWeight: 600 }}>{d.week_label}</td>
-                      <td style={{ padding: '10px 14px' }}>{d.impressions?.toLocaleString()}</td>
-                      <td style={{ padding: '10px 14px' }}>{d.likes?.toLocaleString()}</td>
-                      <td style={{ padding: '10px 14px' }}>{d.comments?.toLocaleString()}</td>
-                      <td style={{ padding: '10px 14px' }}>{d.shares?.toLocaleString()}</td>
-                      <td style={{ padding: '10px 14px' }}>{d.profile_views?.toLocaleString()}</td>
-                      <td style={{ padding: '10px 14px' }}>{d.followers?.toLocaleString()}</td>
-                      <td style={{ padding: '10px 14px' }}>{d.search_appearances?.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
+          {/* WEEKLY TAB */}
+          {tab === 'weekly' && (
+            <>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+                <Btn onClick={() => setShowAdd(true)}>+ Add Weekly Data</Btn>
+                <Btn v="orange" onClick={() => setShowReport(true)} disabled={reportData.length === 0}>Generate Report</Btn>
+              </div>
+              {loading ? <Loader /> : reportData.length === 0 ? <EmptyState icon="▤" title="No data yet" sub="Add weekly LinkedIn metrics" /> : (
+                <Card style={{ overflow: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: C.navy, color: C.white }}>
+                        {['Week', 'Impressions', 'Likes', 'Comments', 'Shares', 'Profile Views', 'Followers', 'Search'].map(h => (
+                          <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reportData.map((d, i) => (
+                        <tr key={d.id} style={{ background: i % 2 ? C.g50 : C.white }}>
+                          <td style={{ padding: '10px 14px', fontWeight: 600 }}>{d.week_label}</td>
+                          <td style={{ padding: '10px 14px' }}>{d.impressions?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 14px' }}>{d.likes?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 14px' }}>{d.comments?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 14px' }}>{d.shares?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 14px' }}>{d.profile_views?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 14px' }}>{d.followers?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 14px' }}>{d.search_appearances?.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </Card>
+              )}
+            </>
+          )}
+
+          {/* PER-POST TAB */}
+          {tab === 'posts' && (
+            <>
+              <Card style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.g700, marginBottom: 12 }}>Select date range to see posted content</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 12, alignItems: 'end' }}>
+                  <Field label="From" value={dateFrom} onChange={setDateFrom} type="date" style={{ marginBottom: 0 }} />
+                  <Field label="To" value={dateTo} onChange={setDateTo} type="date" style={{ marginBottom: 0 }} />
+                  <Btn onClick={fetchPostedPosts} disabled={!dateFrom || !dateTo} style={{ marginBottom: 16 }}>Load Posts</Btn>
+                </div>
+              </Card>
+
+              {loadingPosts ? <Loader /> : postedPosts.length === 0 ? (
+                <EmptyState icon="✎" title={dateFrom ? 'No posted content in this range' : 'Select a date range'} sub="Only posts marked as Posted with a posted date will appear here" />
+              ) : (
+                <>
+                  <div style={{ fontSize: 13, color: C.g500, marginBottom: 12 }}>{postedPosts.length} posted posts found. Enter metrics for each, then save.</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
+                    {postedPosts.map(p => {
+                      const m = postMetrics[p.id] || {}
+                      const hasMetrics = p.post_metrics && p.post_metrics.length > 0
+                      return (
+                        <Card key={p.id} style={{ padding: 16 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                                <span style={{ fontSize: 12, color: C.g400 }}>{p.posted_date && new Date(p.posted_date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.g100, color: C.g600 }}>{p.content_type}</span>
+                                {hasMetrics && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.greenLight, color: C.green }}>Has metrics</span>}
+                              </div>
+                              <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.content}</div>
+                            </div>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                            {metricFields.map(f => (
+                              <div key={f}>
+                                <label style={{ fontSize: 11, fontWeight: 600, color: C.g500, textTransform: 'capitalize' }}>{f.replace('_', ' ')}</label>
+                                <input type="number" value={m[f] || ''} onChange={e => updatePostMetric(p.id, f, e.target.value)} placeholder="0"
+                                  style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit' }} />
+                              </div>
+                            ))}
+                          </div>
+                          <div style={{ marginTop: 8 }}>
+                            <label style={{ fontSize: 11, fontWeight: 600, color: C.g500 }}>Notes</label>
+                            <input value={m.notes || ''} onChange={e => updatePostMetric(p.id, 'notes', e.target.value)} placeholder="e.g. Went viral, reshared by..."
+                              style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit' }} />
+                          </div>
+                        </Card>
+                      )
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <Btn v="success" sz="lg" onClick={saveAllPostMetrics} disabled={saving}>
+                      {saving ? 'Saving...' : 'Save All Post Metrics'}
+                    </Btn>
+                  </div>
+                </>
+              )}
+            </>
           )}
         </>
       )}
 
-      {/* Add Data Modal */}
+      {/* Add Weekly Data Modal */}
       <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Add Weekly Data" width={600}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Week Label" value={wLabel} onChange={setWLabel} placeholder="e.g. Mar 10-16" />
@@ -934,14 +1176,13 @@ function AdminReports({ profile }) {
         </div>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
           <Btn v="secondary" onClick={() => setShowAdd(false)}>Cancel</Btn>
-          <Btn onClick={handleSave} disabled={!wStart || saving}>{saving ? 'Saving...' : 'Save Data'}</Btn>
+          <Btn onClick={handleSaveWeekly} disabled={!wStart || saving}>{saving ? 'Saving...' : 'Save Data'}</Btn>
         </div>
       </Modal>
 
-      {/* Report Preview Modal */}
+      {/* Report Preview */}
       <Modal open={showReport} onClose={() => setShowReport(false)} title="Performance Report" width={700}>
-        <div id="report-content" style={{ fontFamily: "'DM Sans', sans-serif" }}>
-          {/* Report Header */}
+        <div style={{ fontFamily: "'DM Sans', sans-serif" }}>
           <div style={{ background: C.navy, color: C.white, padding: 32, borderRadius: 12, marginBottom: 24 }}>
             <div style={{ fontSize: 12, letterSpacing: 4, textTransform: 'uppercase', color: C.g400, marginBottom: 8 }}>DPT Content Hub</div>
             <div style={{ fontSize: 28, fontWeight: 800, marginBottom: 4 }}>LinkedIn Performance Report</div>
@@ -950,14 +1191,12 @@ function AdminReports({ profile }) {
               {reportData.length > 0 && `${reportData[0].week_label} to ${reportData[reportData.length - 1].week_label}`}
             </div>
           </div>
-
-          {/* KPIs */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
             {[
               { label: 'Followers', value: latestFollowers.toLocaleString(), sub: `+${followerGrowth}% growth`, color: C.blue },
               { label: 'Total Impressions', value: totalImps.toLocaleString(), sub: `${reportData.length} weeks`, color: C.orange },
               { label: 'Total Engagements', value: totalEng.toLocaleString(), sub: 'Likes + Comments + Shares', color: C.green },
-              { label: 'Avg Engagement Rate', value: `${avgEngRate}%`, sub: 'Engagements / Impressions', color: C.navy },
+              { label: 'Avg Eng Rate', value: `${avgEngRate}%`, sub: 'Engagements / Impressions', color: C.navy },
             ].map((k, i) => (
               <div key={i} style={{ padding: 16, borderRadius: 10, border: `1px solid ${C.g200}`, textAlign: 'center' }}>
                 <div style={{ fontSize: 24, fontWeight: 800, color: k.color }}>{k.value}</div>
@@ -966,10 +1205,8 @@ function AdminReports({ profile }) {
               </div>
             ))}
           </div>
-
-          {/* Weekly Trend (simple text-based chart) */}
           <div style={{ marginBottom: 24 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Weekly Impressions Trend</h3>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Weekly Impressions</h3>
             {reportData.map((d, i) => {
               const maxImp = Math.max(...reportData.map(r => r.impressions || 0))
               const pct = maxImp ? ((d.impressions || 0) / maxImp) * 100 : 0
@@ -977,7 +1214,7 @@ function AdminReports({ profile }) {
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
                   <div style={{ width: 100, fontSize: 12, color: C.g500, flexShrink: 0 }}>{d.week_label}</div>
                   <div style={{ flex: 1, height: 24, background: C.g100, borderRadius: 4, overflow: 'hidden' }}>
-                    <div style={{ width: `${pct}%`, height: '100%', background: `linear-gradient(90deg, ${C.blue}, ${C.orange})`, borderRadius: 4, transition: 'width 0.5s' }} />
+                    <div style={{ width: `${pct}%`, height: '100%', background: `linear-gradient(90deg, ${C.blue}, ${C.orange})`, borderRadius: 4 }} />
                   </div>
                   <div style={{ width: 70, fontSize: 13, fontWeight: 600, color: C.navy, textAlign: 'right' }}>{(d.impressions || 0).toLocaleString()}</div>
                 </div>
@@ -985,38 +1222,33 @@ function AdminReports({ profile }) {
             })}
           </div>
 
-          {/* Data Table */}
-          <div>
-            <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Detailed Breakdown</h3>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: C.navy, color: C.white }}>
-                  {['Week', 'Impressions', 'Likes', 'Comments', 'Shares', 'Profile Views', 'Followers'].map(h => (
-                    <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 600 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {reportData.map((d, i) => (
-                  <tr key={i} style={{ background: i % 2 ? C.g50 : C.white }}>
-                    <td style={{ padding: '8px 10px', fontWeight: 600 }}>{d.week_label}</td>
-                    <td style={{ padding: '8px 10px' }}>{d.impressions?.toLocaleString()}</td>
-                    <td style={{ padding: '8px 10px' }}>{d.likes?.toLocaleString()}</td>
-                    <td style={{ padding: '8px 10px' }}>{d.comments?.toLocaleString()}</td>
-                    <td style={{ padding: '8px 10px' }}>{d.shares?.toLocaleString()}</td>
-                    <td style={{ padding: '8px 10px' }}>{d.profile_views?.toLocaleString()}</td>
-                    <td style={{ padding: '8px 10px' }}>{d.followers?.toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* Top Posts Section (if post metrics exist) */}
+          {postedPosts.filter(p => p.post_metrics?.length > 0).length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Top Performing Posts</h3>
+              {[...postedPosts].filter(p => p.post_metrics?.length > 0).sort((a, b) => (b.post_metrics?.[0]?.impressions || 0) - (a.post_metrics?.[0]?.impressions || 0)).slice(0, 5).map((p, i) => {
+                const m = p.post_metrics[0]
+                return (
+                  <div key={i} style={{ padding: 14, marginBottom: 8, borderRadius: 8, border: `1px solid ${C.g200}`, background: i === 0 ? C.yellowLight : C.white }}>
+                    <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', marginBottom: 8 }}>{p.content}</div>
+                    <div style={{ display: 'flex', gap: 16, fontSize: 12, color: C.g500 }}>
+                      <span>{(m.impressions || 0).toLocaleString()} impr</span>
+                      <span>{m.likes || 0} likes</span>
+                      <span>{m.comments || 0} comments</span>
+                      <span>{m.shares || 0} shares</span>
+                      {m.clicks > 0 && <span>{m.clicks} clicks</span>}
+                      {m.saves > 0 && <span>{m.saves} saves</span>}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           <div style={{ marginTop: 24, padding: 16, background: C.g50, borderRadius: 8, textAlign: 'center', fontSize: 12, color: C.g400 }}>
             Confidential — Prepared by DPT Agency — {new Date().toLocaleDateString('en-AU', { year: 'numeric', month: 'long', day: 'numeric' })}
           </div>
         </div>
-
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.g200}` }}>
           <Btn v="secondary" onClick={() => setShowReport(false)}>Close</Btn>
           <Btn onClick={() => window.print()}>Print / Save PDF</Btn>
