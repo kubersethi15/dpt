@@ -441,6 +441,8 @@ function PostDetail({ post, profile, onClose, onUpdate }) {
   const { comments, refresh: refreshComments } = useComments(post?.id)
   const [newComment, setNewComment] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [showChangesFeedback, setShowChangesFeedback] = useState(false)
+  const [changesFeedback, setChangesFeedback] = useState('')
   const isAdmin = profile?.role === 'admin'
   const isClient = profile?.role === 'client'
 
@@ -461,6 +463,23 @@ function PostDetail({ post, profile, onClose, onUpdate }) {
 
   const updateStatus = async (status) => {
     await supabase.from('posts').update({ status }).eq('id', post.id)
+    onUpdate()
+  }
+
+  const submitChangesRequested = async () => {
+    if (!changesFeedback.trim()) return
+    // Add the feedback as a comment first
+    await supabase.from('post_comments').insert({
+      post_id: post.id,
+      author_id: profile.id,
+      author_name: profile.full_name,
+      content: changesFeedback.trim(),
+      is_client: true,
+    })
+    // Then update status
+    await supabase.from('posts').update({ status: 'changes_requested' }).eq('id', post.id)
+    setChangesFeedback('')
+    setShowChangesFeedback(false)
     onUpdate()
   }
 
@@ -538,15 +557,34 @@ function PostDetail({ post, profile, onClose, onUpdate }) {
             )}
             {isClient && (
               <>
-                {post.status === 'pending_review' && (
+                {post.status === 'pending_review' && !showChangesFeedback && (
                   <>
                     <Btn v="success" sz="sm" onClick={() => updateStatus('approved')}>✓ Approve</Btn>
-                    <Btn v="orange" sz="sm" onClick={() => updateStatus('changes_requested')}>Request Changes</Btn>
+                    <Btn v="orange" sz="sm" onClick={() => setShowChangesFeedback(true)}>Request Changes</Btn>
                   </>
                 )}
               </>
             )}
           </div>
+
+          {/* Changes Requested Feedback Form */}
+          {isClient && showChangesFeedback && (
+            <div style={{ marginTop: 12, padding: 16, background: C.orangeLight, borderRadius: 10, border: `1px solid ${C.orange}33` }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.g700, marginBottom: 8 }}>What changes do you need?</div>
+              <textarea
+                value={changesFeedback}
+                onChange={e => setChangesFeedback(e.target.value)}
+                placeholder="Describe the changes you'd like — e.g. soften the tone, change the hook, remove a specific line..."
+                rows={4}
+                style={{ width: '100%', padding: 12, borderRadius: 8, border: `1px solid ${C.orange}55`, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.6, resize: 'vertical', background: C.white }}
+                autoFocus
+              />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                <Btn v="secondary" sz="sm" onClick={() => { setShowChangesFeedback(false); setChangesFeedback('') }}>Cancel</Btn>
+                <Btn v="orange" sz="sm" onClick={submitChangesRequested} disabled={!changesFeedback.trim()}>Submit Feedback</Btn>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Comments */}
