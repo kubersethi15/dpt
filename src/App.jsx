@@ -257,6 +257,7 @@ function LoginPage({ onAuth }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [isSignUp, setIsSignUp] = useState(false)
+  const [isReset, setIsReset] = useState(false)
   const [fullName, setFullName] = useState('')
   const [signUpRole, setSignUpRole] = useState('client')
   const [loading, setLoading] = useState(false)
@@ -264,6 +265,15 @@ function LoginPage({ onAuth }) {
   const handleSubmit = async () => {
     setError('')
     setLoading(true)
+    if (isReset) {
+      const { error: e } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin
+      })
+      if (e) setError(e.message)
+      else setError('Password reset link sent! Check your email.')
+      setLoading(false)
+      return
+    }
     if (isSignUp) {
       const { error: e } = await onAuth.signUp(email, password, { full_name: fullName, role: signUpRole })
       if (e) setError(e.message)
@@ -275,6 +285,8 @@ function LoginPage({ onAuth }) {
     setLoading(false)
   }
 
+  const successMsg = error && (error.includes('Check your email') || error.includes('reset link sent'))
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: `linear-gradient(135deg, ${C.navy} 0%, #1a2744 50%, ${C.darkNavy} 100%)` }}>
       <div style={{ width: 420, maxWidth: '90vw' }}>
@@ -283,23 +295,30 @@ function LoginPage({ onAuth }) {
           <div style={{ fontSize: 13, color: C.g400, letterSpacing: 5, textTransform: 'uppercase', marginTop: 4 }}>Content Hub</div>
         </div>
         <Card style={{ padding: 36 }}>
-          <h2 style={{ marginBottom: 24, fontSize: 20, fontWeight: 700, color: C.navy }}>{isSignUp ? 'Create Account' : 'Sign In'}</h2>
-          {error && <div style={{ padding: '10px 14px', borderRadius: 8, background: error.includes('Check your email') ? C.greenLight : C.redLight, color: error.includes('Check your email') ? C.green : C.red, fontSize: 13, marginBottom: 16 }}>{error}</div>}
-          {isSignUp && <Field label="Full Name" value={fullName} onChange={setFullName} placeholder="Jane Smith" />}
+          <h2 style={{ marginBottom: 24, fontSize: 20, fontWeight: 700, color: C.navy }}>
+            {isReset ? 'Reset Password' : isSignUp ? 'Create Account' : 'Sign In'}
+          </h2>
+          {error && <div style={{ padding: '10px 14px', borderRadius: 8, background: successMsg ? C.greenLight : C.redLight, color: successMsg ? C.green : C.red, fontSize: 13, marginBottom: 16 }}>{error}</div>}
+          {isSignUp && !isReset && <Field label="Full Name" value={fullName} onChange={setFullName} placeholder="Jane Smith" />}
           <Field label="Email" value={email} onChange={setEmail} type="email" placeholder="you@company.com" />
-          <Field label="Password" value={password} onChange={setPassword} type="password" placeholder="••••••••" />
-          {isSignUp && (
+          {!isReset && <Field label="Password" value={password} onChange={setPassword} type="password" placeholder="••••••••" />}
+          {isSignUp && !isReset && (
             <Sel label="Account Type" value={signUpRole} onChange={setSignUpRole} options={[
               { value: 'client', label: 'Client' },
               { value: 'admin', label: 'DPT Admin' },
             ]} />
           )}
-          <Btn onClick={handleSubmit} disabled={loading} style={{ width: '100%', marginTop: 8 }} sz="lg">
-            {loading ? 'Please wait...' : isSignUp ? 'Create Account' : 'Sign In'}
+          <Btn onClick={handleSubmit} disabled={loading || !email} style={{ width: '100%', marginTop: 8 }} sz="lg">
+            {loading ? 'Please wait...' : isReset ? 'Send Reset Link' : isSignUp ? 'Create Account' : 'Sign In'}
           </Btn>
-          <div style={{ textAlign: 'center', marginTop: 20 }}>
-            <button onClick={() => { setIsSignUp(!isSignUp); setError('') }} style={{ background: 'none', border: 'none', color: C.blue, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>
-              {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+          <div style={{ textAlign: 'center', marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {!isReset && (
+              <button onClick={() => { setIsReset(true); setError('') }} style={{ background: 'none', border: 'none', color: C.g400, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Forgot password?
+              </button>
+            )}
+            <button onClick={() => { setIsSignUp(!isSignUp); setIsReset(false); setError('') }} style={{ background: 'none', border: 'none', color: C.blue, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>
+              {isSignUp || isReset ? 'Back to sign in' : "Don't have an account? Sign up"}
             </button>
           </div>
         </Card>
@@ -443,10 +462,24 @@ function PostDetail({ post, profile, onClose, onUpdate }) {
   const [uploading, setUploading] = useState(false)
   const [showChangesFeedback, setShowChangesFeedback] = useState(false)
   const [changesFeedback, setChangesFeedback] = useState('')
+  const [isEditing, setIsEditing] = useState(false)
+  const [editedContent, setEditedContent] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
   const isAdmin = profile?.role === 'admin'
   const isClient = profile?.role === 'client'
 
   if (!post) return null
+
+  const startEditing = () => { setEditedContent(post.content); setIsEditing(true) }
+  const cancelEditing = () => { setIsEditing(false); setEditedContent('') }
+  const saveEditing = async () => {
+    if (!editedContent.trim()) return
+    setSavingEdit(true)
+    await supabase.from('posts').update({ content: editedContent.trim() }).eq('id', post.id)
+    setSavingEdit(false)
+    setIsEditing(false)
+    onUpdate()
+  }
 
   const addComment = async () => {
     if (!newComment.trim()) return
@@ -518,9 +551,27 @@ function PostDetail({ post, profile, onClose, onUpdate }) {
             <Badge status={post.status} />
             {post.scheduled_date && <span style={{ fontSize: 13, color: C.g500 }}>📅 {new Date(post.scheduled_date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}</span>}
           </div>
-          <div style={{ fontSize: 14, lineHeight: 1.7, color: C.g800, whiteSpace: 'pre-wrap', background: C.g50, padding: 16, borderRadius: 10, border: `1px solid ${C.g200}` }}>
-            {post.content}
-          </div>
+          {isEditing ? (
+            <div>
+              <textarea value={editedContent} onChange={e => setEditedContent(e.target.value)} rows={10}
+                style={{ width: '100%', padding: 14, borderRadius: 10, border: `2px solid ${C.blue}`, fontSize: 14, fontFamily: 'inherit', lineHeight: 1.7, resize: 'vertical', background: C.white }} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                <Btn v="secondary" sz="sm" onClick={cancelEditing}>Cancel</Btn>
+                <Btn v="success" sz="sm" onClick={saveEditing} disabled={savingEdit || !editedContent.trim()}>{savingEdit ? 'Saving...' : 'Save Changes'}</Btn>
+              </div>
+            </div>
+          ) : (
+            <div style={{ position: 'relative' }}>
+              <div style={{ fontSize: 14, lineHeight: 1.7, color: C.g800, whiteSpace: 'pre-wrap', background: C.g50, padding: 16, borderRadius: 10, border: `1px solid ${C.g200}` }}>
+                {post.content}
+              </div>
+              {isAdmin && (
+                <button onClick={startEditing} style={{ position: 'absolute', top: 8, right: 8, background: C.white, border: `1px solid ${C.g300}`, borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 600, color: C.g600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  Edit
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Graphic */}

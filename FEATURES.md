@@ -24,7 +24,7 @@
 | Date picker for scheduling and posting | ✅ | Separate scheduled_date and posted_date |
 | Graphic upload per post | ✅ | Via Supabase Storage |
 | Comment thread per post | ✅ | Both admin and client can comment |
-| Post editing by admin | 📋 | Admin can't edit post content inline yet |
+| Post editing by admin | ✅ | Admin can edit post content inline in detail panel |
 | Graphic approval as separate status | 📋 | Currently no distinction between copy and graphic approval |
 | Bulk status changes | 📋 | Select multiple posts, change status at once |
 | Bulk scheduling (drag-and-drop calendar) | 💡 | Visual drag to reschedule |
@@ -40,7 +40,7 @@
 | Request changes with mandatory feedback | ✅ | Must type feedback before submitting |
 | Comment on posts | ✅ | Threaded comments |
 | Calendar view of scheduled content | ✅ | Monthly grouped view |
-| Password reset / forgot password | 📋 | No "Forgot password" link on login yet |
+| Password reset / forgot password | ✅ | Forgot password link on login, sends reset email |
 | Email notifications on new content to review | 📋 | Clients don't know when new content arrives |
 | Client dashboard with engagement metrics | 📋 | Currently basic — needs proper KPI dashboard |
 | Graphic preview and approval | 📋 | Tied to graphic approval status feature |
