@@ -844,6 +844,22 @@ function AdminContent({ profile }) {
    ADMIN: CLIENTS
    ═══════════════════════════════════════════════════════════════ */
 
+function useClientConfig(clientId) {
+  const [config, setConfig] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  const fetch = useCallback(async () => {
+    if (!clientId) { setConfig(null); setLoading(false); return }
+    setLoading(true)
+    const { data } = await supabase.from('client_config').select('*').eq('client_id', clientId).single()
+    setConfig(data || null)
+    setLoading(false)
+  }, [clientId])
+
+  useEffect(() => { fetch() }, [fetch])
+  return { config, loading, refresh: fetch }
+}
+
 function AdminClients({ profile }) {
   const { clients, loading, refresh } = useClients()
   const [showInvite, setShowInvite] = useState(false)
@@ -854,34 +870,61 @@ function AdminClients({ profile }) {
   const [inviting, setInviting] = useState(false)
   const [invMsg, setInvMsg] = useState('')
 
+  // Voice config
+  const [configClientId, setConfigClientId] = useState(null)
+  const { config, loading: configLoading, refresh: refreshConfig } = useClientConfig(configClientId)
+  const [cfg, setCfg] = useState({})
+  const [savingConfig, setSavingConfig] = useState(false)
+  const [configTab, setConfigTab] = useState('voice')
+
+  useEffect(() => {
+    if (config) setCfg({ ...config })
+    else if (configClientId) setCfg({ client_id: configClientId })
+  }, [config, configClientId])
+
+  const updateCfg = (field, value) => setCfg(prev => ({ ...prev, [field]: value }))
+
+  const saveConfig = async () => {
+    setSavingConfig(true)
+    const payload = { ...cfg, client_id: configClientId }
+    delete payload.id; delete payload.created_at; delete payload.updated_at
+    await supabase.from('client_config').upsert(payload, { onConflict: 'client_id' })
+    setSavingConfig(false)
+    refreshConfig()
+  }
+
   const handleInvite = async () => {
     if (!invEmail || !invName) return
-    setInviting(true)
-    setInvMsg('')
-    // Create user via signup with temp password (client changes later)
+    setInviting(true); setInvMsg('')
     const tempPw = 'Welcome123!'
-    const { error } = await supabase.auth.signUp({
-      email: invEmail,
-      password: tempPw,
-      options: { data: { full_name: invName, role: 'client' } }
-    })
-    if (error) {
-      setInvMsg(error.message)
-    } else {
-      // Update profile with extra details
-      // Note: profile is created by trigger, we update it after a brief delay
+    const { error } = await supabase.auth.signUp({ email: invEmail, password: tempPw, options: { data: { full_name: invName, role: 'client' } } })
+    if (error) { setInvMsg(error.message) }
+    else {
       setTimeout(async () => {
         await supabase.from('profiles').update({ company: invCompany, niche: invNiche, avatar_initials: invName.split(' ').map(w => w[0]).join('').slice(0, 2) }).eq('email', invEmail)
         refresh()
       }, 1000)
       setInvMsg(`Invite sent to ${invEmail}. Temp password: ${tempPw}`)
-      setInvEmail('')
-      setInvName('')
-      setInvCompany('')
-      setInvNiche('')
+      setInvEmail(''); setInvName(''); setInvCompany(''); setInvNiche('')
     }
     setInviting(false)
   }
+
+  const configClient = clients.find(c => c.id === configClientId)
+  const hasConfig = config !== null
+
+  const ConfigField = ({ label, field, textarea, placeholder, rows = 3 }) => (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{ display: 'block', marginBottom: 5, fontSize: 12, fontWeight: 600, color: C.g600 }}>{label}</label>
+      {textarea ? (
+        <textarea value={cfg[field] || ''} onChange={e => updateCfg(field, e.target.value)} placeholder={placeholder} rows={rows}
+          style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.6 }} />
+      ) : (
+        <input value={cfg[field] || ''} onChange={e => updateCfg(field, e.target.value)} placeholder={placeholder}
+          style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit' }} />
+      )}
+    </div>
+  )
 
   return (
     <div className="fade-in">
@@ -889,25 +932,29 @@ function AdminClients({ profile }) {
         action={<Btn onClick={() => setShowInvite(true)}>+ Add Client</Btn>} />
 
       {loading ? <Loader /> : clients.length === 0 ? <EmptyState icon="◎" title="No clients" sub="Add your first client to get started" /> : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
           {clients.map(c => (
             <Card key={c.id}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
                 <Avatar initials={c.avatar_initials || c.full_name?.split(' ').map(w => w[0]).join('')} size={44} />
-                <div>
+                <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>{c.full_name}</div>
                   <div style={{ fontSize: 13, color: C.g500 }}>{c.company || 'No company'}</div>
                 </div>
               </div>
-              <div style={{ fontSize: 12, color: C.g400 }}>
+              <div style={{ fontSize: 12, color: C.g400, marginBottom: 12 }}>
                 {c.email}<br />
                 {c.niche && <span style={{ display: 'inline-block', marginTop: 4, padding: '2px 8px', borderRadius: 4, background: C.g100, fontSize: 11, color: C.g600 }}>{c.niche}</span>}
               </div>
+              <Btn v="primary" sz="sm" onClick={() => { setConfigClientId(c.id); setConfigTab('voice') }} style={{ width: '100%' }}>
+                Configure Voice & Content
+              </Btn>
             </Card>
           ))}
         </div>
       )}
 
+      {/* Invite Modal */}
       <Modal open={showInvite} onClose={() => { setShowInvite(false); setInvMsg('') }} title="Add Client">
         {invMsg && <div style={{ padding: '10px 14px', borderRadius: 8, background: invMsg.includes('Invite sent') ? C.greenLight : C.redLight, color: invMsg.includes('Invite sent') ? C.green : C.red, fontSize: 13, marginBottom: 16 }}>{invMsg}</div>}
         <Field label="Full Name" value={invName} onChange={setInvName} placeholder="Jane Smith" />
@@ -918,6 +965,114 @@ function AdminClients({ profile }) {
           <Btn v="secondary" onClick={() => setShowInvite(false)}>Cancel</Btn>
           <Btn onClick={handleInvite} disabled={!invEmail || !invName || inviting}>{inviting ? 'Creating...' : 'Add Client'}</Btn>
         </div>
+      </Modal>
+
+      {/* Voice & Content Config Modal */}
+      <Modal open={!!configClientId} onClose={() => setConfigClientId(null)} title={`Configure: ${configClient?.full_name || ''}`} width={720}>
+        {configLoading ? <Loader /> : (
+          <>
+            {!hasConfig && (
+              <div style={{ padding: '12px 16px', background: C.yellowLight, borderRadius: 8, border: `1px solid ${C.yellow}33`, marginBottom: 16, fontSize: 13, color: C.g700 }}>
+                No config yet for this client. Fill in the fields below and save to create their voice profile.
+              </div>
+            )}
+
+            {/* Config Tabs */}
+            <div style={{ display: 'flex', gap: 2, marginBottom: 20, borderBottom: `2px solid ${C.g200}` }}>
+              {[{ id: 'voice', label: 'Voice & Style' }, { id: 'content', label: 'Content Rules' }, { id: 'research', label: 'Research & Niche' }, { id: 'calendar', label: 'Calendar' }].map(t => (
+                <button key={t.id} onClick={() => setConfigTab(t.id)} style={{
+                  padding: '8px 16px', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                  background: configTab === t.id ? C.white : 'transparent', color: configTab === t.id ? C.navy : C.g400,
+                  borderBottom: configTab === t.id ? `3px solid ${C.blue}` : '3px solid transparent', marginBottom: -2,
+                }}>{t.label}</button>
+              ))}
+            </div>
+
+            {/* VOICE TAB */}
+            {configTab === 'voice' && (
+              <div>
+                <ConfigField label="Voice Tone" field="voice_tone" placeholder="e.g. Direct, practitioner, no-BS, occasionally admits uncertainty" />
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ display: 'block', marginBottom: 5, fontSize: 12, fontWeight: 600, color: C.g600 }}>Perspective</label>
+                  <select value={cfg.voice_perspective || 'first_person'} onChange={e => updateCfg('voice_perspective', e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit', background: C.white }}>
+                    <option value="first_person">First Person (I/me — most LinkedIn creators)</option>
+                    <option value="third_person">Third Person (they — about the brand)</option>
+                    <option value="company_voice">Company Voice (we — brand account)</option>
+                  </select>
+                </div>
+                <ConfigField label="Voice Description" field="voice_description" textarea placeholder="Longer description of how this person sounds. E.g. 'Speaks like a practitioner who's been in the trenches. Uses specific examples from real work. Never sounds like a consultant or coach. Occasionally drops a casual profanity. References real numbers and situations.'" rows={4} />
+                <ConfigField label="Banned Words (comma-separated)" field="banned_words" textarea placeholder="transformative, unlock, empower, leverage, elevate, game-changer, navigate, foster, delve, crucial, landscape" rows={2} />
+                <ConfigField label="Preferred Vocabulary" field="preferred_vocabulary" textarea placeholder="Words/phrases they actually use. E.g. 'in the trenches, BS, real talk, the hard truth'" rows={2} />
+                <ConfigField label="Writing Style Notes" field="writing_style_notes" textarea placeholder="Any other notes about how they write. E.g. 'Never uses bullet points. Loves one-line paragraphs. Often starts posts with a provocative statement.'" rows={3} />
+                <ConfigField label="Example Posts (paste 3-5 of their best, separated by ---)" field="example_posts" textarea placeholder="Paste their best performing posts here, separated by --- on a new line. These will be used as voice reference when generating content." rows={8} />
+              </div>
+            )}
+
+            {/* CONTENT RULES TAB */}
+            {configTab === 'content' && (
+              <div>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ display: 'block', marginBottom: 5, fontSize: 12, fontWeight: 600, color: C.g600 }}>Emoji Policy</label>
+                  <select value={cfg.emoji_policy || 'never'} onChange={e => updateCfg('emoji_policy', e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit', background: C.white }}>
+                    <option value="never">Never use emojis</option>
+                    <option value="sparingly">Use sparingly (1-2 per post max)</option>
+                    <option value="freely">Use freely</option>
+                  </select>
+                </div>
+                <ConfigField label="CTA Preferences" field="cta_preferences" textarea placeholder="e.g. 'Link in comments only. Never REPOST if you agree. Never P.S. Follow me. Invite genuine responses only.'" rows={2} />
+                <ConfigField label="Hashtag Strategy" field="hashtag_strategy" textarea placeholder="e.g. 'Max 3 hashtags. Always use #CustomerSuccess. Never use #Motivation'" rows={2} />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: 'block', marginBottom: 5, fontSize: 12, fontWeight: 600, color: C.g600 }}>Min Post Length (words)</label>
+                    <input type="number" value={cfg.post_length_min || 100} onChange={e => updateCfg('post_length_min', parseInt(e.target.value) || 100)}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit' }} />
+                  </div>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: 'block', marginBottom: 5, fontSize: 12, fontWeight: 600, color: C.g600 }}>Max Post Length (words)</label>
+                    <input type="number" value={cfg.post_length_max || 200} onChange={e => updateCfg('post_length_max', parseInt(e.target.value) || 200)}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit' }} />
+                  </div>
+                </div>
+                <ConfigField label="Formatting Rules" field="formatting_rules" textarea placeholder="e.g. 'Short paragraphs (1-3 lines). Line breaks between thoughts. No bullet points. End with thought-provoking question, not a CTA.'" rows={3} />
+              </div>
+            )}
+
+            {/* RESEARCH & NICHE TAB */}
+            {configTab === 'research' && (
+              <div>
+                <ConfigField label="Industry" field="industry" placeholder="e.g. SaaS, FinTech, Healthcare, Government" />
+                <ConfigField label="Sub-Topics They Cover (comma-separated)" field="sub_topics" textarea placeholder="e.g. churn prevention, QBR strategy, stakeholder management, public sector CS, AI in customer success" rows={2} />
+                <ConfigField label="Unique Angle / Thesis" field="unique_angle" textarea placeholder="What makes their perspective different? E.g. 'Traditional CS health scores are broken. Real account health is measured by stakeholder silence patterns and champion engagement, not NPS.'" rows={3} />
+                <ConfigField label="Target Audience" field="target_audience" textarea placeholder="Who are they writing for? E.g. 'VP/Director level CS leaders at B2B SaaS companies, 50-500 employees. Also read by CSMs who aspire to leadership.'" rows={2} />
+                <ConfigField label="Competitors / Others in Their Space" field="competitors" textarea placeholder="Other LinkedIn creators in their niche. E.g. 'Jay Nathan, Daphne Lopes, Rick Adams — but our client is more practitioner-focused and less consultant-y'" rows={2} />
+                <ConfigField label="Research Keywords (comma-separated)" field="research_keywords" textarea placeholder="Specific terms to search when looking for trending topics. E.g. 'customer success, churn, NRR, QBR, enterprise CS, health score'" rows={2} />
+                <ConfigField label="Subreddits to Monitor" field="subreddits" placeholder="e.g. r/CustomerSuccess, r/SaaS, r/sales, r/consulting" />
+                <ConfigField label="Blogs & Sources" field="blogs_and_sources" textarea placeholder="Industry blogs, newsletters, publications to check for trends. E.g. 'Gainsight blog, ChurnZero blog, SaaStr, First Round Review'" rows={2} />
+                <ConfigField label="Thought Leaders to Reference" field="thought_leaders" placeholder="People whose content to be aware of. E.g. 'Jason Lemkin, Tomasz Tunguz, Lincoln Murphy'" />
+              </div>
+            )}
+
+            {/* CALENDAR TAB */}
+            {configTab === 'calendar' && (
+              <div>
+                <ConfigField label="Posting Frequency" field="posting_frequency" placeholder="e.g. 5 per week, 3 per week, daily" />
+                <ConfigField label="Day-of-Week Themes" field="day_themes" textarea placeholder="e.g. Monday: Hot takes / contrarian opinions. Tuesday: Newsletter teasers. Wednesday: Carousels / educational. Thursday: Personal stories. Friday: Quick punch / under 10 lines." rows={5} />
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.g200}` }}>
+              <div style={{ fontSize: 12, color: C.g400 }}>
+                {hasConfig ? `Last updated: ${new Date(config.updated_at).toLocaleDateString('en-AU')}` : 'Not configured yet'}
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <Btn v="secondary" onClick={() => setConfigClientId(null)}>Close</Btn>
+                <Btn v="success" onClick={saveConfig} disabled={savingConfig}>{savingConfig ? 'Saving...' : 'Save Config'}</Btn>
+              </div>
+            </div>
+          </>
+        )}
       </Modal>
     </div>
   )
@@ -1516,11 +1671,61 @@ function AdminCreateContent({ profile }) {
   const [saving, setSaving] = useState(false)
 
   const client = clients.find(c => c.id === selClientId)
+  const { config } = useClientConfig(selClientId)
+
+  // Build dynamic prompts from client config
+  const buildResearchContext = () => {
+    if (!config) return ''
+    const parts = []
+    if (config.industry) parts.push(`INDUSTRY: ${config.industry}`)
+    if (config.sub_topics) parts.push(`KEY TOPICS: ${config.sub_topics}`)
+    if (config.unique_angle) parts.push(`UNIQUE ANGLE: ${config.unique_angle}`)
+    if (config.target_audience) parts.push(`TARGET AUDIENCE: ${config.target_audience}`)
+    if (config.competitors) parts.push(`COMPETITORS IN SPACE: ${config.competitors}`)
+    if (config.research_keywords) parts.push(`SEARCH THESE KEYWORDS: ${config.research_keywords}`)
+    if (config.subreddits) parts.push(`CHECK THESE SUBREDDITS: ${config.subreddits}`)
+    if (config.blogs_and_sources) parts.push(`CHECK THESE BLOGS/SOURCES: ${config.blogs_and_sources}`)
+    if (config.thought_leaders) parts.push(`AWARE OF THESE THOUGHT LEADERS: ${config.thought_leaders}`)
+    return parts.join('\n')
+  }
+
+  const buildVoicePrompt = () => {
+    if (!config) return `VOICE RULES:
+- First person as the client. Direct, practitioner voice
+- Short lines. Lots of white space. No walls of text
+- NO emojis
+- BANNED WORDS: "transformative", "unlock", "empower", "leverage", "elevate", "game-changer", "navigate", "foster", "delve", "crucial", "landscape"
+- NO engagement bait: no "REPOST if you agree", "SAVE this", "Comment FRAMEWORK below"
+- Posts should be 100-200 words
+- If it sounds like a TED talk or SaaS blog, rewrite it`
+
+    const parts = ['VOICE RULES (follow these EXACTLY for this client):']
+    const perspective = { first_person: 'Write in first person (I/me)', third_person: 'Write in third person', company_voice: 'Write as the company (we/our)' }
+    parts.push(`- ${perspective[config.voice_perspective] || perspective.first_person}`)
+    if (config.voice_tone) parts.push(`- Tone: ${config.voice_tone}`)
+    if (config.voice_description) parts.push(`- Voice description: ${config.voice_description}`)
+    if (config.emoji_policy === 'never') parts.push('- NO emojis. Ever.')
+    else if (config.emoji_policy === 'sparingly') parts.push('- Use emojis sparingly (1-2 per post max)')
+    else parts.push('- Emojis are fine to use')
+    if (config.banned_words) parts.push(`- BANNED WORDS: ${config.banned_words}`)
+    if (config.preferred_vocabulary) parts.push(`- USE THESE WORDS/PHRASES: ${config.preferred_vocabulary}`)
+    if (config.cta_preferences) parts.push(`- CTA RULES: ${config.cta_preferences}`)
+    if (config.hashtag_strategy) parts.push(`- HASHTAGS: ${config.hashtag_strategy}`)
+    parts.push(`- Post length: ${config.post_length_min || 100}-${config.post_length_max || 200} words`)
+    if (config.formatting_rules) parts.push(`- FORMAT: ${config.formatting_rules}`)
+    if (config.writing_style_notes) parts.push(`- STYLE NOTES: ${config.writing_style_notes}`)
+    if (config.example_posts) {
+      parts.push('\nREFERENCE POSTS (match this voice and style):')
+      parts.push(config.example_posts)
+    }
+    return parts.join('\n')
+  }
 
   const handleResearch = async () => {
     if (!selClientId) return
     setError('')
     setStep('researching')
+    const researchContext = buildResearchContext()
     try {
       const raw = await callClaude(
         `You are a senior social media strategist researching trending content topics for a LinkedIn thought leader.
@@ -1530,16 +1735,20 @@ RESEARCH APPROACH:
 - Look for contrarian angles, not obvious takes everyone posts
 - Prioritise topics that spark debate or have a strong personal story angle
 - Avoid generic motivational content, listicles, and "5 tips" style topics
+${researchContext ? `\nCLIENT-SPECIFIC RESEARCH INSTRUCTIONS:\n${researchContext}` : ''}
 
 OUTPUT: Return EXACTLY a JSON array of 6-8 topic objects. No markdown, no preamble. Just the JSON array.
 Each object: {"title":"...","angle":"...","source":"...","hook_type":"contrarian|personal_story|data_backed|hot_take|how_to|case_study","why":"..."}`,
         `Research trending content topics for this LinkedIn creator:
 CLIENT: ${client.full_name}
 COMPANY: ${client.company || 'N/A'}
-NICHE: ${client.niche || 'General business'}
+NICHE: ${client.niche || config?.industry || 'General business'}
+${config?.unique_angle ? `THEIR UNIQUE ANGLE: ${config.unique_angle}` : ''}
+${config?.target_audience ? `TARGET AUDIENCE: ${config.target_audience}` : ''}
 ${customContext ? `ADDITIONAL CONTEXT: ${customContext}` : ''}
 
-Search current trends in their niche across LinkedIn, Reddit, Quora, industry blogs, and search trends from the last 2-4 weeks. Return ONLY the JSON array.`,
+Search current trends in their niche across LinkedIn, Reddit, Quora, industry blogs, and search trends from the last 2-4 weeks.${config?.research_keywords ? ` Pay special attention to these keywords: ${config.research_keywords}` : ''}${config?.subreddits ? ` Check these subreddits: ${config.subreddits}` : ''}
+Return ONLY the JSON array.`,
         true
       )
       const parsed = parseJsonFromAI(raw)
@@ -1556,19 +1765,12 @@ Search current trends in their niche across LinkedIn, Reddit, Quora, industry bl
     setError('')
     setStep('generating')
     const chosenTopics = selectedTopics.map(i => topics[i])
+    const voicePrompt = buildVoicePrompt()
     try {
       const raw = await callClaude(
-        `You are a LinkedIn ghostwriter. Follow these rules EXACTLY:
+        `You are a LinkedIn ghostwriter creating posts for a specific client. Follow their voice profile EXACTLY.
 
-VOICE RULES:
-- First person as the client. Direct, practitioner voice — not a coach or motivational speaker
-- Short lines. Lots of white space. No walls of text
-- NO emojis. Ever
-- BANNED WORDS: "transformative", "unlock", "empower", "leverage", "elevate", "game-changer", "navigate", "foster", "delve", "crucial", "landscape"
-- NO engagement bait: no "REPOST if you agree", "SAVE this", "Comment FRAMEWORK below", "P.S. Follow me"
-- Only acceptable CTA: "Link in comments" if sharing a resource
-- Posts should be 100-200 words
-- If it sounds like a TED talk or SaaS blog, rewrite it to sound like explaining to a colleague at a bar
+${voicePrompt}
 
 HOOK STRATEGY (first 2 lines make or break the post):
 - Contrarian: Challenge accepted belief with a specific example
@@ -1576,25 +1778,19 @@ HOOK STRATEGY (first 2 lines make or break the post):
 - Data-backed: Lead with a surprising number
 - Hot take: Provocative opinion stated confidently
 - Pattern interrupt: Start with something unexpected
-
-FORMAT:
-- Short paragraphs (1-3 lines max)
-- Line breaks between thoughts
-- No bullet points in post body
-- End with thought-provoking statement, NOT a CTA
+${config?.day_themes ? `\nDAY-OF-WEEK THEMES:\n${config.day_themes}` : ''}
 
 OUTPUT: Return EXACTLY a JSON array of post objects. No markdown, no preamble. Just JSON.
 Each: {"content":"...","topic":"...","hook_type":"...","content_type":"Text|Carousel","day_suggestion":"Mon|Tue|Wed|Thu|Fri"}`,
         `Generate ${numDays} LinkedIn posts for:
 CLIENT: ${client.full_name}
 COMPANY: ${client.company || 'N/A'}
-NICHE: ${client.niche || 'General business'}
-${customContext ? `CONTEXT: ${customContext}` : ''}
+NICHE: ${client.niche || config?.industry || 'General business'}
 
 TOPICS:
 ${chosenTopics.map((t, i) => `${i + 1}. ${t.title} — Angle: ${t.angle} — Hook: ${t.hook_type}`).join('\n')}
 
-Create ${numDays} posts distributed across topics. Vary hook types. Return ONLY JSON.`,
+Create ${numDays} posts distributed across topics. Vary hook types.${config?.day_themes ? ` Match posts to the day themes: ${config.day_themes}` : ''} Return ONLY JSON.`,
         false
       )
       const parsed = parseJsonFromAI(raw)
@@ -1672,6 +1868,16 @@ Create ${numDays} posts distributed across topics. Vary hook types. Return ONLY 
           <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 20 }}>Select Client & Context</h3>
           <Sel label="Client" value={selClientId} onChange={setSelClientId}
             options={[{ value: '', label: 'Choose a client...' }, ...clients.map(c => ({ value: c.id, label: `${c.full_name} — ${c.company || ''} (${c.niche || 'General'})` }))]} />
+          {selClientId && (
+            <div style={{ padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13,
+              background: config ? C.greenLight : C.yellowLight,
+              border: `1px solid ${config ? C.green + '33' : C.yellow + '33'}`,
+              color: config ? C.green : C.g700 }}>
+              {config
+                ? `✓ Voice profile configured — ${config.voice_tone || 'Custom voice'}, ${config.emoji_policy === 'never' ? 'no emojis' : config.emoji_policy}, ${config.post_length_min}-${config.post_length_max} words`
+                : '⚠ No voice profile configured for this client. Posts will use default settings. Configure in Clients → Configure Voice & Content.'}
+            </div>
+          )}
           <Field label="Additional Context (optional)" value={customContext} onChange={setCustomContext} textarea rows={3}
             placeholder="e.g. Focus on cybersecurity topics, they launched a new product this week, avoid AI content..." />
           <Sel label="Number of Posts" value={numDays} onChange={setNumDays}
