@@ -930,22 +930,12 @@ function AdminClients({ profile }) {
 function AdminReports({ profile }) {
   const { clients } = useClients()
   const [selClient, setSelClient] = useState('')
-  const { data: reportData, loading, refresh } = useReportData(selClient)
-  const [showAdd, setShowAdd] = useState(false)
-  const [showReport, setShowReport] = useState(false)
-  const [showPostMetrics, setShowPostMetrics] = useState(false)
-  const [tab, setTab] = useState('weekly') // 'weekly' or 'posts'
-
-  // Date range for report
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [tab, setTab] = useState('data')
 
-  // Posted posts in date range (for per-post metrics)
-  const [postedPosts, setPostedPosts] = useState([])
-  const [postMetrics, setPostMetrics] = useState({}) // { postId: { impressions, likes, ... } }
-  const [loadingPosts, setLoadingPosts] = useState(false)
-
-  // Form fields for weekly data
+  const { data: reportData, loading: loadingWeekly, refresh: refreshWeekly } = useReportData(selClient)
+  const [showAddWeekly, setShowAddWeekly] = useState(false)
   const [wLabel, setWLabel] = useState('')
   const [wStart, setWStart] = useState('')
   const [wImpressions, setWImpressions] = useState('')
@@ -955,31 +945,29 @@ function AdminReports({ profile }) {
   const [wProfileViews, setWProfileViews] = useState('')
   const [wFollowers, setWFollowers] = useState('')
   const [wSearch, setWSearch] = useState('')
+
+  const [postedPosts, setPostedPosts] = useState([])
+  const [postMetrics, setPostMetrics] = useState({})
+  const [loadingPosts, setLoadingPosts] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [showReport, setShowReport] = useState(false)
 
   const client = clients.find(c => c.id === selClient)
 
-  // Fetch posted posts in date range
   const fetchPostedPosts = async () => {
     if (!selClient || !dateFrom || !dateTo) return
     setLoadingPosts(true)
     const { data: posts } = await supabase
-      .from('posts')
-      .select('*, post_metrics(*)')
-      .eq('client_id', selClient)
-      .eq('status', 'posted')
-      .gte('posted_date', dateFrom)
-      .lte('posted_date', dateTo)
+      .from('posts').select('*, post_metrics(*)')
+      .eq('client_id', selClient).eq('status', 'posted')
+      .gte('posted_date', dateFrom).lte('posted_date', dateTo)
       .order('posted_date', { ascending: true })
-
     setPostedPosts(posts || [])
-
-    // Pre-fill existing metrics
     const metrics = {}
     ;(posts || []).forEach(p => {
-      if (p.post_metrics && p.post_metrics.length > 0) {
+      if (p.post_metrics?.length > 0) {
         const m = p.post_metrics[0]
-        metrics[p.id] = { impressions: m.impressions || '', likes: m.likes || '', comments: m.comments || '', shares: m.shares || '', reposts: m.reposts || '', clicks: m.clicks || '', saves: m.saves || '', video_views: m.video_views || '', engagement_rate: m.engagement_rate || '', notes: m.notes || '' }
+        metrics[p.id] = { impressions: m.impressions || '', likes: m.likes || '', comments: m.comments || '', shares: m.shares || '', reposts: m.reposts || '', clicks: m.clicks || '', saves: m.saves || '', video_views: m.video_views || '', notes: m.notes || '' }
       }
     })
     setPostMetrics(metrics)
@@ -997,60 +985,86 @@ function AdminReports({ profile }) {
       shares: parseInt(wShares) || 0, profile_views: parseInt(wProfileViews) || 0,
       followers: parseInt(wFollowers) || 0, search_appearances: parseInt(wSearch) || 0,
     }, { onConflict: 'client_id,week_start' })
-    setShowAdd(false)
+    setShowAddWeekly(false)
     setWLabel(''); setWStart(''); setWImpressions(''); setWLikes(''); setWComments(''); setWShares(''); setWProfileViews(''); setWFollowers(''); setWSearch('')
     setSaving(false)
-    refresh()
+    refreshWeekly()
   }
 
   const updatePostMetric = (postId, field, value) => {
     setPostMetrics(prev => ({ ...prev, [postId]: { ...(prev[postId] || {}), [field]: value } }))
   }
 
-  const savePostMetrics = async (postId) => {
-    const m = postMetrics[postId]
-    if (!m) return
-    await supabase.from('post_metrics').upsert({
-      post_id: postId,
-      impressions: parseInt(m.impressions) || 0, likes: parseInt(m.likes) || 0,
-      comments: parseInt(m.comments) || 0, shares: parseInt(m.shares) || 0,
-      reposts: parseInt(m.reposts) || 0, clicks: parseInt(m.clicks) || 0,
-      saves: parseInt(m.saves) || 0, video_views: parseInt(m.video_views) || 0,
-      engagement_rate: parseFloat(m.engagement_rate) || 0, notes: m.notes || '',
-    }, { onConflict: 'post_id' })
-  }
-
   const saveAllPostMetrics = async () => {
     setSaving(true)
     for (const postId of Object.keys(postMetrics)) {
-      await savePostMetrics(postId)
+      const m = postMetrics[postId]
+      if (!m) continue
+      await supabase.from('post_metrics').upsert({
+        post_id: postId, impressions: parseInt(m.impressions) || 0, likes: parseInt(m.likes) || 0,
+        comments: parseInt(m.comments) || 0, shares: parseInt(m.shares) || 0, reposts: parseInt(m.reposts) || 0,
+        clicks: parseInt(m.clicks) || 0, saves: parseInt(m.saves) || 0, video_views: parseInt(m.video_views) || 0, notes: m.notes || '',
+      }, { onConflict: 'post_id' })
     }
     setSaving(false)
     fetchPostedPosts()
   }
 
-  // Report KPIs
-  const totalImps = reportData.reduce((s, d) => s + (d.impressions || 0), 0)
-  const totalEng = reportData.reduce((s, d) => s + (d.likes || 0) + (d.comments || 0) + (d.shares || 0), 0)
-  const avgEngRate = totalImps ? ((totalEng / totalImps) * 100).toFixed(1) : '0'
-  const latestFollowers = reportData.length ? reportData[reportData.length - 1].followers : 0
-  const firstFollowers = reportData.length ? reportData[0].followers : 0
-  const followerGrowth = firstFollowers ? (((latestFollowers - firstFollowers) / firstFollowers) * 100).toFixed(0) : 0
-
   const metricFields = ['impressions', 'likes', 'comments', 'shares', 'reposts', 'clicks', 'saves', 'video_views']
+
+  // Report calculations
+  const filteredWeekly = reportData.filter(d => (!dateFrom || !dateTo) ? true : d.week_start >= dateFrom && d.week_start <= dateTo)
+  const totalImps = filteredWeekly.reduce((s, d) => s + (d.impressions || 0), 0)
+  const totalLikes = filteredWeekly.reduce((s, d) => s + (d.likes || 0), 0)
+  const totalComments = filteredWeekly.reduce((s, d) => s + (d.comments || 0), 0)
+  const totalShares = filteredWeekly.reduce((s, d) => s + (d.shares || 0), 0)
+  const totalEng = totalLikes + totalComments + totalShares
+  const avgEngRate = totalImps ? ((totalEng / totalImps) * 100).toFixed(1) : '0'
+  const totalProfileViews = filteredWeekly.reduce((s, d) => s + (d.profile_views || 0), 0)
+  const latestFollowers = filteredWeekly.length ? filteredWeekly[filteredWeekly.length - 1].followers : 0
+  const firstFollowers = filteredWeekly.length ? filteredWeekly[0].followers : 0
+  const followerGrowth = firstFollowers ? (((latestFollowers - firstFollowers) / firstFollowers) * 100).toFixed(1) : '0'
+  const followerNet = latestFollowers - firstFollowers
+
+  const postsWithMetrics = postedPosts.filter(p => p.post_metrics?.length > 0)
+  const sortedByImpressions = [...postsWithMetrics].sort((a, b) => (b.post_metrics[0]?.impressions || 0) - (a.post_metrics[0]?.impressions || 0))
+  const sortedByEngagement = [...postsWithMetrics].sort((a, b) => {
+    const eA = (a.post_metrics[0]?.likes || 0) + (a.post_metrics[0]?.comments || 0) + (a.post_metrics[0]?.shares || 0)
+    const eB = (b.post_metrics[0]?.likes || 0) + (b.post_metrics[0]?.comments || 0) + (b.post_metrics[0]?.shares || 0)
+    return eB - eA
+  })
+
+  const typeBreakdown = {}
+  postsWithMetrics.forEach(p => {
+    const t = p.content_type || 'Text'
+    if (!typeBreakdown[t]) typeBreakdown[t] = { count: 0, impressions: 0, engagement: 0 }
+    typeBreakdown[t].count++
+    typeBreakdown[t].impressions += p.post_metrics[0]?.impressions || 0
+    typeBreakdown[t].engagement += (p.post_metrics[0]?.likes || 0) + (p.post_metrics[0]?.comments || 0) + (p.post_metrics[0]?.shares || 0)
+  })
+
+  const canGenerate = filteredWeekly.length > 0 || postsWithMetrics.length > 0
+  const RC = { navy: '#1B3A5C', blue: '#2D8CFF', orange: '#FF6B35', light: '#F0F4F8', accent: '#22C55E', gray: '#64748B' }
 
   return (
     <div className="fade-in">
-      <PageHeader title="Reports" subtitle="Weekly account metrics + per-post performance" />
+      <PageHeader title="Reports" subtitle="Enter data, then generate branded client reports" />
 
       <Sel label="Select Client" value={selClient} onChange={v => { setSelClient(v); setPostedPosts([]) }}
         options={[{ value: '', label: 'Choose a client...' }, ...clients.map(c => ({ value: c.id, label: `${c.full_name} — ${c.company || ''}` }))]} />
 
       {selClient && (
         <>
-          {/* Tabs */}
-          <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `2px solid ${C.g200}`, paddingBottom: 0 }}>
-            {[{ id: 'weekly', label: 'Weekly Account Data' }, { id: 'posts', label: 'Per-Post Metrics' }].map(t => (
+          <Card style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.navy, marginBottom: 12 }}>Reporting Period</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <Field label="From" value={dateFrom} onChange={setDateFrom} type="date" />
+              <Field label="To" value={dateTo} onChange={setDateTo} type="date" />
+            </div>
+          </Card>
+
+          <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `2px solid ${C.g200}` }}>
+            {[{ id: 'data', label: 'Enter Data' }, { id: 'report', label: 'Generate Report' }].map(t => (
               <button key={t.id} onClick={() => setTab(t.id)} style={{
                 padding: '10px 20px', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
                 background: tab === t.id ? C.white : 'transparent', color: tab === t.id ? C.navy : C.g400,
@@ -1059,99 +1073,105 @@ function AdminReports({ profile }) {
             ))}
           </div>
 
-          {/* WEEKLY TAB */}
-          {tab === 'weekly' && (
+          {tab === 'data' && (
             <>
-              <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-                <Btn onClick={() => setShowAdd(true)}>+ Add Weekly Data</Btn>
-                <Btn v="orange" onClick={() => setShowReport(true)} disabled={reportData.length === 0}>Generate Report</Btn>
-              </div>
-              {loading ? <Loader /> : reportData.length === 0 ? <EmptyState icon="▤" title="No data yet" sub="Add weekly LinkedIn metrics" /> : (
-                <Card style={{ overflow: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ background: C.navy, color: C.white }}>
+              <div style={{ marginBottom: 28 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>Weekly Account Data</h3>
+                  <Btn sz="sm" onClick={() => setShowAddWeekly(true)}>+ Add Week</Btn>
+                </div>
+                {loadingWeekly ? <Loader /> : reportData.length === 0 ? (
+                  <div style={{ padding: 20, textAlign: 'center', color: C.g400, fontSize: 13, background: C.g50, borderRadius: 8 }}>No weekly data yet.</div>
+                ) : (
+                  <Card style={{ overflow: 'auto', padding: 0 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead><tr style={{ background: C.navy, color: C.white }}>
                         {['Week', 'Impressions', 'Likes', 'Comments', 'Shares', 'Profile Views', 'Followers', 'Search'].map(h => (
-                          <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>{h}</th>
+                          <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, fontSize: 12 }}>{h}</th>
                         ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reportData.map((d, i) => (
+                      </tr></thead>
+                      <tbody>{reportData.map((d, i) => (
                         <tr key={d.id} style={{ background: i % 2 ? C.g50 : C.white }}>
-                          <td style={{ padding: '10px 14px', fontWeight: 600 }}>{d.week_label}</td>
-                          <td style={{ padding: '10px 14px' }}>{d.impressions?.toLocaleString()}</td>
-                          <td style={{ padding: '10px 14px' }}>{d.likes?.toLocaleString()}</td>
-                          <td style={{ padding: '10px 14px' }}>{d.comments?.toLocaleString()}</td>
-                          <td style={{ padding: '10px 14px' }}>{d.shares?.toLocaleString()}</td>
-                          <td style={{ padding: '10px 14px' }}>{d.profile_views?.toLocaleString()}</td>
-                          <td style={{ padding: '10px 14px' }}>{d.followers?.toLocaleString()}</td>
-                          <td style={{ padding: '10px 14px' }}>{d.search_appearances?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 12px', fontWeight: 600 }}>{d.week_label}</td>
+                          <td style={{ padding: '10px 12px' }}>{d.impressions?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 12px' }}>{d.likes?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 12px' }}>{d.comments?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 12px' }}>{d.shares?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 12px' }}>{d.profile_views?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 12px' }}>{d.followers?.toLocaleString()}</td>
+                          <td style={{ padding: '10px 12px' }}>{d.search_appearances?.toLocaleString()}</td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </Card>
-              )}
+                      ))}</tbody>
+                    </table>
+                  </Card>
+                )}
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>Per-Post Metrics</h3>
+                  {dateFrom && dateTo && <Btn sz="sm" v="secondary" onClick={fetchPostedPosts}>Refresh</Btn>}
+                </div>
+                {!dateFrom || !dateTo ? (
+                  <div style={{ padding: 20, textAlign: 'center', color: C.g400, fontSize: 13, background: C.g50, borderRadius: 8 }}>Set a date range above to load posted content.</div>
+                ) : loadingPosts ? <Loader /> : postedPosts.length === 0 ? (
+                  <div style={{ padding: 20, textAlign: 'center', color: C.g400, fontSize: 13, background: C.g50, borderRadius: 8 }}>No posted content in this date range.</div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 13, color: C.g500, marginBottom: 12 }}>{postedPosts.length} posted posts. Enter current lifetime metrics.</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+                      {postedPosts.map(p => {
+                        const m = postMetrics[p.id] || {}
+                        const hasMetrics = p.post_metrics?.length > 0
+                        return (
+                          <Card key={p.id} style={{ padding: 16 }}>
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+                              <span style={{ fontSize: 12, color: C.g400 }}>{p.posted_date && new Date(p.posted_date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.g100, color: C.g600 }}>{p.content_type}</span>
+                              {hasMetrics && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.greenLight, color: C.green }}>Saved</span>}
+                            </div>
+                            <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.5, marginBottom: 10, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.content}</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                              {metricFields.map(f => (
+                                <div key={f}>
+                                  <label style={{ fontSize: 11, fontWeight: 600, color: C.g500, textTransform: 'capitalize' }}>{f.replace('_', ' ')}</label>
+                                  <input type="number" value={m[f] || ''} onChange={e => updatePostMetric(p.id, f, e.target.value)} placeholder="0"
+                                    style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit' }} />
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ marginTop: 8 }}>
+                              <label style={{ fontSize: 11, fontWeight: 600, color: C.g500 }}>Notes</label>
+                              <input value={m.notes || ''} onChange={e => updatePostMetric(p.id, 'notes', e.target.value)} placeholder="e.g. Reshared by industry leader..."
+                                style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit' }} />
+                            </div>
+                          </Card>
+                        )
+                      })}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <Btn v="success" onClick={saveAllPostMetrics} disabled={saving}>{saving ? 'Saving...' : 'Save All Post Metrics'}</Btn>
+                    </div>
+                  </>
+                )}
+              </div>
             </>
           )}
 
-          {/* PER-POST TAB */}
-          {tab === 'posts' && (
+          {tab === 'report' && (
             <>
-              <Card style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.g700, marginBottom: 12 }}>Select date range to see posted content</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 12, alignItems: 'end' }}>
-                  <Field label="From" value={dateFrom} onChange={setDateFrom} type="date" style={{ marginBottom: 0 }} />
-                  <Field label="To" value={dateTo} onChange={setDateTo} type="date" style={{ marginBottom: 0 }} />
-                  <Btn onClick={fetchPostedPosts} disabled={!dateFrom || !dateTo} style={{ marginBottom: 16 }}>Load Posts</Btn>
-                </div>
-              </Card>
-
-              {loadingPosts ? <Loader /> : postedPosts.length === 0 ? (
-                <EmptyState icon="✎" title={dateFrom ? 'No posted content in this range' : 'Select a date range'} sub="Only posts marked as Posted with a posted date will appear here" />
+              {!canGenerate ? (
+                <EmptyState icon="▤" title="No data to report on" sub="Add weekly data and per-post metrics in the Enter Data tab first." />
               ) : (
                 <>
-                  <div style={{ fontSize: 13, color: C.g500, marginBottom: 12 }}>{postedPosts.length} posted posts found. Enter metrics for each, then save.</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
-                    {postedPosts.map(p => {
-                      const m = postMetrics[p.id] || {}
-                      const hasMetrics = p.post_metrics && p.post_metrics.length > 0
-                      return (
-                        <Card key={p.id} style={{ padding: 16 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-                                <span style={{ fontSize: 12, color: C.g400 }}>{p.posted_date && new Date(p.posted_date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.g100, color: C.g600 }}>{p.content_type}</span>
-                                {hasMetrics && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.greenLight, color: C.green }}>Has metrics</span>}
-                              </div>
-                              <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.content}</div>
-                            </div>
-                          </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-                            {metricFields.map(f => (
-                              <div key={f}>
-                                <label style={{ fontSize: 11, fontWeight: 600, color: C.g500, textTransform: 'capitalize' }}>{f.replace('_', ' ')}</label>
-                                <input type="number" value={m[f] || ''} onChange={e => updatePostMetric(p.id, f, e.target.value)} placeholder="0"
-                                  style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit' }} />
-                              </div>
-                            ))}
-                          </div>
-                          <div style={{ marginTop: 8 }}>
-                            <label style={{ fontSize: 11, fontWeight: 600, color: C.g500 }}>Notes</label>
-                            <input value={m.notes || ''} onChange={e => updatePostMetric(p.id, 'notes', e.target.value)} placeholder="e.g. Went viral, reshared by..."
-                              style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit' }} />
-                          </div>
-                        </Card>
-                      )
-                    })}
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                    <Btn v="success" sz="lg" onClick={saveAllPostMetrics} disabled={saving}>
-                      {saving ? 'Saving...' : 'Save All Post Metrics'}
-                    </Btn>
-                  </div>
+                  <Card style={{ marginBottom: 16, background: C.blueLight, border: `1px solid ${C.blue}33` }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.navy }}>Report for {client?.full_name}</div>
+                    <div style={{ fontSize: 13, color: C.g600, marginTop: 4 }}>
+                      {filteredWeekly.length} weeks of account data · {postsWithMetrics.length} posts with metrics
+                      {dateFrom && dateTo && ` · ${dateFrom} to ${dateTo}`}
+                    </div>
+                  </Card>
+                  <Btn v="orange" sz="lg" onClick={() => setShowReport(true)}>Preview & Print Report</Btn>
                 </>
               )}
             </>
@@ -1159,8 +1179,7 @@ function AdminReports({ profile }) {
         </>
       )}
 
-      {/* Add Weekly Data Modal */}
-      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Add Weekly Data" width={600}>
+      <Modal open={showAddWeekly} onClose={() => setShowAddWeekly(false)} title="Add Weekly Data" width={600}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Week Label" value={wLabel} onChange={setWLabel} placeholder="e.g. Mar 10-16" />
           <Field label="Week Start Date" value={wStart} onChange={setWStart} type="date" />
@@ -1175,83 +1194,183 @@ function AdminReports({ profile }) {
           <Field label="Search Appearances" value={wSearch} onChange={setWSearch} type="number" placeholder="0" />
         </div>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
-          <Btn v="secondary" onClick={() => setShowAdd(false)}>Cancel</Btn>
-          <Btn onClick={handleSaveWeekly} disabled={!wStart || saving}>{saving ? 'Saving...' : 'Save Data'}</Btn>
+          <Btn v="secondary" onClick={() => setShowAddWeekly(false)}>Cancel</Btn>
+          <Btn onClick={handleSaveWeekly} disabled={!wStart || saving}>{saving ? 'Saving...' : 'Save'}</Btn>
         </div>
       </Modal>
 
-      {/* Report Preview */}
-      <Modal open={showReport} onClose={() => setShowReport(false)} title="Performance Report" width={700}>
-        <div style={{ fontFamily: "'DM Sans', sans-serif" }}>
-          <div style={{ background: C.navy, color: C.white, padding: 32, borderRadius: 12, marginBottom: 24 }}>
-            <div style={{ fontSize: 12, letterSpacing: 4, textTransform: 'uppercase', color: C.g400, marginBottom: 8 }}>DPT Content Hub</div>
-            <div style={{ fontSize: 28, fontWeight: 800, marginBottom: 4 }}>LinkedIn Performance Report</div>
-            <div style={{ fontSize: 14, color: C.g300 }}>
-              {client?.full_name} — {client?.company}<br />
-              {reportData.length > 0 && `${reportData[0].week_label} to ${reportData[reportData.length - 1].week_label}`}
+      {/* ═══ BRANDED REPORT ═══ */}
+      <Modal open={showReport} onClose={() => setShowReport(false)} title="" width={800}>
+        <div style={{ fontFamily: "'DM Sans', sans-serif", color: '#1a1a2e' }}>
+          <div style={{ background: `linear-gradient(135deg, ${RC.navy} 0%, #0f2440 100%)`, color: 'white', padding: '48px 40px', borderRadius: 12, marginBottom: 32, position: 'relative', overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', top: -40, right: -40, width: 200, height: 200, borderRadius: '50%', background: 'rgba(45,140,255,0.1)' }} />
+            <div style={{ fontSize: 11, letterSpacing: 5, textTransform: 'uppercase', color: 'rgba(255,255,255,0.5)', marginBottom: 16 }}>DPT Agency — Client Report</div>
+            <div style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, marginBottom: 8 }}>LinkedIn Performance Report</div>
+            <div style={{ fontSize: 16, color: 'rgba(255,255,255,0.7)', marginBottom: 20 }}>{client?.full_name} — {client?.company}</div>
+            <div style={{ display: 'flex', gap: 24, fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>
+              <span>Period: {dateFrom || 'All time'} to {dateTo || 'Present'}</span>
+              <span>Generated: {new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
-            {[
-              { label: 'Followers', value: latestFollowers.toLocaleString(), sub: `+${followerGrowth}% growth`, color: C.blue },
-              { label: 'Total Impressions', value: totalImps.toLocaleString(), sub: `${reportData.length} weeks`, color: C.orange },
-              { label: 'Total Engagements', value: totalEng.toLocaleString(), sub: 'Likes + Comments + Shares', color: C.green },
-              { label: 'Avg Eng Rate', value: `${avgEngRate}%`, sub: 'Engagements / Impressions', color: C.navy },
-            ].map((k, i) => (
-              <div key={i} style={{ padding: 16, borderRadius: 10, border: `1px solid ${C.g200}`, textAlign: 'center' }}>
-                <div style={{ fontSize: 24, fontWeight: 800, color: k.color }}>{k.value}</div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: C.g600, marginTop: 2 }}>{k.label}</div>
-                <div style={{ fontSize: 11, color: C.g400, marginTop: 2 }}>{k.sub}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{ marginBottom: 24 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Weekly Impressions</h3>
-            {reportData.map((d, i) => {
-              const maxImp = Math.max(...reportData.map(r => r.impressions || 0))
-              const pct = maxImp ? ((d.impressions || 0) / maxImp) * 100 : 0
-              return (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-                  <div style={{ width: 100, fontSize: 12, color: C.g500, flexShrink: 0 }}>{d.week_label}</div>
-                  <div style={{ flex: 1, height: 24, background: C.g100, borderRadius: 4, overflow: 'hidden' }}>
-                    <div style={{ width: `${pct}%`, height: '100%', background: `linear-gradient(90deg, ${C.blue}, ${C.orange})`, borderRadius: 4 }} />
-                  </div>
-                  <div style={{ width: 70, fontSize: 13, fontWeight: 600, color: C.navy, textAlign: 'right' }}>{(d.impressions || 0).toLocaleString()}</div>
+
+          <div style={{ marginBottom: 32 }}>
+            <div style={{ fontSize: 11, letterSpacing: 3, textTransform: 'uppercase', color: RC.gray, marginBottom: 12, fontWeight: 700 }}>Executive Summary</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+              {[
+                { label: 'Current Followers', value: latestFollowers.toLocaleString(), sub: `+${followerNet.toLocaleString()} (${followerGrowth}%)`, color: RC.blue, sc: '#22C55E' },
+                { label: 'Total Impressions', value: totalImps.toLocaleString(), sub: `${filteredWeekly.length} weeks`, color: RC.orange, sc: RC.gray },
+                { label: 'Total Engagements', value: totalEng.toLocaleString(), sub: `${totalLikes} likes · ${totalComments} comments · ${totalShares} shares`, color: RC.accent, sc: RC.gray },
+                { label: 'Avg Engagement Rate', value: `${avgEngRate}%`, sub: 'Engagements / Impressions', color: RC.navy, sc: RC.gray },
+              ].map((k, i) => (
+                <div key={i} style={{ padding: 20, borderRadius: 10, border: '1px solid #e2e8f0', background: '#fafbfc' }}>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: k.color, letterSpacing: -1 }}>{k.value}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginTop: 4 }}>{k.label}</div>
+                  <div style={{ fontSize: 11, color: k.sc, marginTop: 4 }}>{k.sub}</div>
                 </div>
-              )
-            })}
+              ))}
+            </div>
           </div>
 
-          {/* Top Posts Section (if post metrics exist) */}
-          {postedPosts.filter(p => p.post_metrics?.length > 0).length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Top Performing Posts</h3>
-              {[...postedPosts].filter(p => p.post_metrics?.length > 0).sort((a, b) => (b.post_metrics?.[0]?.impressions || 0) - (a.post_metrics?.[0]?.impressions || 0)).slice(0, 5).map((p, i) => {
+          {filteredWeekly.length > 0 && (
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: 'uppercase', color: RC.gray, marginBottom: 12, fontWeight: 700 }}>Weekly Performance</div>
+              <Card style={{ padding: 20 }}>
+                {filteredWeekly.map((d, i) => {
+                  const maxImp = Math.max(...filteredWeekly.map(r => r.impressions || 0), 1)
+                  const pct = ((d.impressions || 0) / maxImp) * 100
+                  const eng = (d.likes || 0) + (d.comments || 0) + (d.shares || 0)
+                  const engRate = d.impressions ? ((eng / d.impressions) * 100).toFixed(1) : '0'
+                  return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: i < filteredWeekly.length - 1 ? 12 : 0 }}>
+                      <div style={{ width: 110, fontSize: 12, color: RC.gray, flexShrink: 0, fontWeight: 600 }}>{d.week_label}</div>
+                      <div style={{ flex: 1, height: 28, background: '#f1f5f9', borderRadius: 6, overflow: 'hidden' }}>
+                        <div style={{ width: `${pct}%`, height: '100%', background: `linear-gradient(90deg, ${RC.blue}, ${RC.orange})`, borderRadius: 6 }} />
+                      </div>
+                      <div style={{ width: 80, fontSize: 13, fontWeight: 700, color: RC.navy, textAlign: 'right' }}>{(d.impressions || 0).toLocaleString()}</div>
+                      <div style={{ width: 50, fontSize: 11, color: RC.gray, textAlign: 'right' }}>{engRate}%</div>
+                    </div>
+                  )
+                })}
+              </Card>
+              <div style={{ marginTop: 16, overflow: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead><tr style={{ background: RC.navy, color: 'white' }}>
+                    {['Week', 'Impressions', 'Likes', 'Comments', 'Shares', 'Profile Views', 'Followers', 'Eng Rate'].map(h => (
+                      <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 600 }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>{filteredWeekly.map((d, i) => {
+                    const eng = (d.likes || 0) + (d.comments || 0) + (d.shares || 0)
+                    const rate = d.impressions ? ((eng / d.impressions) * 100).toFixed(1) : '0'
+                    return (
+                      <tr key={i} style={{ background: i % 2 ? '#f8fafc' : 'white', borderBottom: '1px solid #e2e8f0' }}>
+                        <td style={{ padding: '8px 10px', fontWeight: 600 }}>{d.week_label}</td>
+                        <td style={{ padding: '8px 10px' }}>{d.impressions?.toLocaleString()}</td>
+                        <td style={{ padding: '8px 10px' }}>{d.likes?.toLocaleString()}</td>
+                        <td style={{ padding: '8px 10px' }}>{d.comments?.toLocaleString()}</td>
+                        <td style={{ padding: '8px 10px' }}>{d.shares?.toLocaleString()}</td>
+                        <td style={{ padding: '8px 10px' }}>{d.profile_views?.toLocaleString()}</td>
+                        <td style={{ padding: '8px 10px' }}>{d.followers?.toLocaleString()}</td>
+                        <td style={{ padding: '8px 10px', fontWeight: 600, color: parseFloat(rate) > 5 ? RC.accent : RC.gray }}>{rate}%</td>
+                      </tr>
+                    )
+                  })}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {sortedByEngagement.length > 0 && (
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: 'uppercase', color: RC.gray, marginBottom: 12, fontWeight: 700 }}>Top Performing Posts</div>
+              {sortedByEngagement.slice(0, 5).map((p, i) => {
                 const m = p.post_metrics[0]
+                const eng = (m.likes || 0) + (m.comments || 0) + (m.shares || 0)
+                const engRate = m.impressions ? ((eng / m.impressions) * 100).toFixed(1) : '0'
                 return (
-                  <div key={i} style={{ padding: 14, marginBottom: 8, borderRadius: 8, border: `1px solid ${C.g200}`, background: i === 0 ? C.yellowLight : C.white }}>
-                    <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', marginBottom: 8 }}>{p.content}</div>
-                    <div style={{ display: 'flex', gap: 16, fontSize: 12, color: C.g500 }}>
-                      <span>{(m.impressions || 0).toLocaleString()} impr</span>
+                  <div key={i} style={{ padding: 16, marginBottom: 10, borderRadius: 10, border: '1px solid #e2e8f0', background: i === 0 ? '#fffbeb' : 'white', position: 'relative' }}>
+                    {i === 0 && <div style={{ position: 'absolute', top: 10, right: 14, fontSize: 11, fontWeight: 700, color: RC.orange, background: '#fff3ed', padding: '2px 10px', borderRadius: 12 }}>Top Post</div>}
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontSize: 16, fontWeight: 800, color: RC.navy, width: 24 }}>#{i + 1}</span>
+                      <span style={{ fontSize: 11, color: RC.gray }}>{p.posted_date && new Date(p.posted_date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                      <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: '#f1f5f9', color: '#475569' }}>{p.content_type}</span>
+                    </div>
+                    <div style={{ fontSize: 13, color: '#334155', lineHeight: 1.6, marginBottom: 10, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.content}</div>
+                    <div style={{ display: 'flex', gap: 20, fontSize: 12 }}>
+                      <span style={{ color: RC.blue, fontWeight: 700 }}>{(m.impressions || 0).toLocaleString()} impr</span>
                       <span>{m.likes || 0} likes</span>
                       <span>{m.comments || 0} comments</span>
                       <span>{m.shares || 0} shares</span>
-                      {m.clicks > 0 && <span>{m.clicks} clicks</span>}
-                      {m.saves > 0 && <span>{m.saves} saves</span>}
+                      {(m.reposts || 0) > 0 && <span>{m.reposts} reposts</span>}
+                      {(m.clicks || 0) > 0 && <span>{m.clicks} clicks</span>}
+                      {(m.saves || 0) > 0 && <span>{m.saves} saves</span>}
+                      <span style={{ color: parseFloat(engRate) > 5 ? RC.accent : RC.gray, fontWeight: 600 }}>{engRate}% eng</span>
                     </div>
+                    {m.notes && <div style={{ fontSize: 12, color: RC.gray, marginTop: 6, fontStyle: 'italic' }}>{m.notes}</div>}
                   </div>
                 )
               })}
             </div>
           )}
 
-          <div style={{ marginTop: 24, padding: 16, background: C.g50, borderRadius: 8, textAlign: 'center', fontSize: 12, color: C.g400 }}>
-            Confidential — Prepared by DPT Agency — {new Date().toLocaleDateString('en-AU', { year: 'numeric', month: 'long', day: 'numeric' })}
+          {Object.keys(typeBreakdown).length > 0 && (
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: 'uppercase', color: RC.gray, marginBottom: 12, fontWeight: 700 }}>Content Type Performance</div>
+              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(Object.keys(typeBreakdown).length, 4)}, 1fr)`, gap: 12 }}>
+                {Object.entries(typeBreakdown).map(([type, data]) => (
+                  <div key={type} style={{ padding: 16, borderRadius: 10, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: RC.navy }}>{data.count}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 8 }}>{type} Posts</div>
+                    <div style={{ fontSize: 11, color: RC.gray }}>Avg {data.count ? Math.round(data.impressions / data.count).toLocaleString() : 0} impr</div>
+                    <div style={{ fontSize: 11, color: RC.gray }}>Avg {data.count ? Math.round(data.engagement / data.count).toLocaleString() : 0} eng</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {postsWithMetrics.length > 0 && (
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: 'uppercase', color: RC.gray, marginBottom: 12, fontWeight: 700 }}>Full Post Breakdown</div>
+              <div style={{ overflow: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                  <thead><tr style={{ background: RC.navy, color: 'white' }}>
+                    {['Date', 'Post Preview', 'Type', 'Impr', 'Likes', 'Cmts', 'Shares', 'Clicks', 'Saves', 'Eng%'].map(h => (
+                      <th key={h} style={{ padding: '8px', textAlign: 'left', fontWeight: 600 }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>{sortedByImpressions.map((p, i) => {
+                    const m = p.post_metrics[0]
+                    const eng = (m.likes || 0) + (m.comments || 0) + (m.shares || 0)
+                    const rate = m.impressions ? ((eng / m.impressions) * 100).toFixed(1) : '0'
+                    return (
+                      <tr key={i} style={{ background: i % 2 ? '#f8fafc' : 'white', borderBottom: '1px solid #e2e8f0' }}>
+                        <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{p.posted_date && new Date(p.posted_date + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}</td>
+                        <td style={{ padding: '8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.content?.substring(0, 60)}...</td>
+                        <td style={{ padding: '8px' }}>{p.content_type}</td>
+                        <td style={{ padding: '8px', fontWeight: 600 }}>{(m.impressions || 0).toLocaleString()}</td>
+                        <td style={{ padding: '8px' }}>{m.likes || 0}</td>
+                        <td style={{ padding: '8px' }}>{m.comments || 0}</td>
+                        <td style={{ padding: '8px' }}>{m.shares || 0}</td>
+                        <td style={{ padding: '8px' }}>{m.clicks || 0}</td>
+                        <td style={{ padding: '8px' }}>{m.saves || 0}</td>
+                        <td style={{ padding: '8px', fontWeight: 600, color: parseFloat(rate) > 5 ? RC.accent : RC.gray }}>{rate}%</td>
+                      </tr>
+                    )
+                  })}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div style={{ padding: '20px 0', borderTop: '2px solid #e2e8f0', textAlign: 'center' }}>
+            <div style={{ fontSize: 12, color: RC.gray }}>Confidential — Prepared by DPT Agency — {new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>{client?.full_name} — {client?.company}</div>
           </div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.g200}` }}>
           <Btn v="secondary" onClick={() => setShowReport(false)}>Close</Btn>
-          <Btn onClick={() => window.print()}>Print / Save PDF</Btn>
+          <Btn v="orange" onClick={() => window.print()}>Print / Save PDF</Btn>
         </div>
       </Modal>
     </div>
