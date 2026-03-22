@@ -28,7 +28,7 @@
 | Graphic approval as separate status | ✅ | Separate graphic_status field, client can approve/reject graphic independently |
 | Bulk status changes | ✅ | Bulk mode toggle, select multiple posts, bulk send for review/approve/schedule/delete |
 | Bulk scheduling (drag-and-drop calendar) | 💡 | Visual drag to reschedule |
-| Post duplication / templates | 💡 | Clone a high-performing post as template |
+| Post duplication / templates | ✅ | Templates library page, save any post as template, filter by client |
 | Multi-platform content adaptation | 💡 | Schema supports Twitter/IG/FB but generation is LinkedIn-only |
 
 ### 2. Client Approval Portal
@@ -119,7 +119,7 @@
 | Research keywords and sources per client | ✅ | |
 | AI content QA pass | ✅ | Instant client-side QA checks banned words, AI phrases, emoji policy, length, engagement bait, exclamation marks |
 | Post scoring / quality indicator | ✅ | Clean/issues badge per post with colored left border |
-| A/B post variants | 💡 | Generate 2 versions of same topic, let client pick |
+| A/B post variants | ✅ | Generate alternative version with different hook/angle, inline comparison |
 | Content calendar recommendations | 💡 | AI suggests what to post next week based on gaps |
 | Competitor content monitoring | 💡 | Track what competitors are posting |
 | Hashtag performance tracking | 💡 | Which hashtags drive reach |

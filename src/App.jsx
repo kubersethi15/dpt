@@ -334,7 +334,7 @@ function LoginPage({ onAuth }) {
 function Sidebar({ profile, view, setView, onLogout, unreadCount = 0 }) {
   const isAdmin = profile?.role === 'admin'
   const items = isAdmin
-    ? [{ id: 'dashboard', label: 'Dashboard', icon: '◉' }, { id: 'create', label: 'Create Content', icon: '⚡' }, { id: 'content', label: 'Content', icon: '✎' }, { id: 'clients', label: 'Clients', icon: '◎' }, { id: 'reports', label: 'Reports', icon: '▤' }, { id: 'notifications', label: 'Notifications', icon: '🔔', badge: unreadCount }]
+    ? [{ id: 'dashboard', label: 'Dashboard', icon: '◉' }, { id: 'create', label: 'Create Content', icon: '⚡' }, { id: 'content', label: 'Content', icon: '✎' }, { id: 'templates', label: 'Templates', icon: '📋' }, { id: 'clients', label: 'Clients', icon: '◎' }, { id: 'reports', label: 'Reports', icon: '▤' }, { id: 'notifications', label: 'Notifications', icon: '🔔', badge: unreadCount }]
     : [{ id: 'my_dashboard', label: 'Dashboard', icon: '◉' }, { id: 'my_content', label: 'My Content', icon: '✎' }, { id: 'my_reports', label: 'My Reports', icon: '▤' }, { id: 'notifications', label: 'Notifications', icon: '🔔', badge: unreadCount }]
 
   return (
@@ -721,6 +721,15 @@ function PostDetail({ post, profile, onClose, onUpdate }) {
                   await updateStatus('pending_review')
                   await supabase.from('notifications').insert({ recipient_id: post.client_id, post_id: post.id, type: 'content_ready_for_review' })
                 }}>Resubmit for Review</Btn>}
+                <Btn v="secondary" sz="sm" onClick={async () => {
+                  const name = prompt('Template name:', `${post.content_type} — ${post.content.slice(0, 40)}...`)
+                  if (!name) return
+                  await supabase.from('post_templates').insert({
+                    name, content: post.content, hook_type: null, content_type: post.content_type,
+                    client_id: post.client_id, created_by: profile.id, is_global: false
+                  })
+                  alert('Saved as template!')
+                }}>📋 Save as Template</Btn>
               </>
             )}
             {isClient && (
@@ -2192,9 +2201,48 @@ function AdminCreateContent({ profile }) {
   const [editContent, setEditContent] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [generatingAlt, setGeneratingAlt] = useState(null)
 
   const client = clients.find(c => c.id === selClientId)
   const { config } = useClientConfig(selClientId)
+
+  const generateAlternative = async (idx) => {
+    const original = generatedPosts[idx]
+    setGeneratingAlt(idx)
+    try {
+      const voicePrompt = buildVoicePrompt()
+      const raw = await callClaude(
+        `You are a LinkedIn ghostwriter creating an A/B variant. Create a DIFFERENT version of the same topic with a different hook and angle.
+
+${voicePrompt}
+
+OUTPUT: Return EXACTLY a JSON object: {"content":"...","hook_type":"...","content_type":"Text|Carousel"}
+No markdown, no preamble. Just JSON.`,
+        `Create an alternative version of this post. SAME topic, DIFFERENT hook, angle, and structure.
+
+ORIGINAL:
+${original.content}
+
+ORIGINAL HOOK: ${original.hook_type || 'unknown'}
+TOPIC: ${original.topic || 'same as original'}
+
+Take a completely different approach — if original was contrarian, try personal story. If data-backed, try hot take. Make it genuinely different, not a rewrite.
+
+Return ONLY the JSON object.`,
+        false
+      )
+      const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
+      const match = cleaned.match(/\{[\s\S]*\}/)
+      if (match) {
+        const alt = JSON.parse(match[0])
+        alt.topic = original.topic
+        alt.day_suggestion = original.day_suggestion
+        alt.is_variant = true
+        setGeneratedPosts(prev => [...prev.slice(0, idx + 1), alt, ...prev.slice(idx + 1)])
+      }
+    } catch (e) { console.error('Alt generation failed:', e) }
+    setGeneratingAlt(null)
+  }
 
   // Build dynamic prompts from client config
   const buildResearchContext = () => {
@@ -2571,6 +2619,9 @@ Create ${numDays} posts distributed across topics. Vary hook types.${config?.day
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
+                    <Btn v="primary" sz="sm" onClick={() => generateAlternative(i)} disabled={generatingAlt !== null}>
+                      {generatingAlt === i ? '...' : 'A/B'}
+                    </Btn>
                     {editingIdx === i ? <Btn v="success" sz="sm" onClick={saveEdit}>Save</Btn> : <Btn v="secondary" sz="sm" onClick={() => startEdit(i)}>Edit</Btn>}
                     <Btn v="danger" sz="sm" onClick={() => removePost(i)}>✕</Btn>
                   </div>
@@ -2633,6 +2684,112 @@ const NOTIF_LABELS = {
   graphic_approved: { label: 'Graphic approved', icon: '✓', color: C.green },
   graphic_changes_requested: { label: 'Changes requested on graphic', icon: '↩', color: C.orange },
   comment_added: { label: 'New comment', icon: '💬', color: C.blue },
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ADMIN: TEMPLATES LIBRARY
+   ═══════════════════════════════════════════════════════════════ */
+
+function AdminTemplates({ profile }) {
+  const { clients } = useClients()
+  const [templates, setTemplates] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [filterClient, setFilterClient] = useState('all')
+  const [showCreate, setShowCreate] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newContent, setNewContent] = useState('')
+  const [newType, setNewType] = useState('Text')
+  const [newHook, setNewHook] = useState('')
+  const [newTags, setNewTags] = useState('')
+  const [newClientId, setNewClientId] = useState('')
+  const [newGlobal, setNewGlobal] = useState(false)
+  const [creating, setCreating] = useState(false)
+
+  const fetchTemplates = async () => {
+    setLoading(true)
+    let q = supabase.from('post_templates').select('*, profiles!post_templates_client_id_fkey(full_name, company)').order('created_at', { ascending: false })
+    if (filterClient !== 'all') q = q.eq('client_id', filterClient)
+    const { data } = await q
+    setTemplates(data || [])
+    setLoading(false)
+  }
+
+  useEffect(() => { fetchTemplates() }, [filterClient])
+
+  const handleCreate = async () => {
+    if (!newName || !newContent) return
+    setCreating(true)
+    await supabase.from('post_templates').insert({
+      name: newName, content: newContent, content_type: newType, hook_type: newHook || null,
+      tags: newTags, client_id: newClientId || null, created_by: profile.id, is_global: newGlobal
+    })
+    setShowCreate(false); setNewName(''); setNewContent(''); setNewTags('')
+    setCreating(false); fetchTemplates()
+  }
+
+  const deleteTemplate = async (id) => {
+    if (!confirm('Delete this template?')) return
+    await supabase.from('post_templates').delete().eq('id', id)
+    fetchTemplates()
+  }
+
+  return (
+    <div className="fade-in">
+      <PageHeader title="Templates" subtitle={`${templates.length} templates`}
+        action={<Btn onClick={() => setShowCreate(true)}>+ New Template</Btn>} />
+
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+        <select value={filterClient} onChange={e => setFilterClient(e.target.value)}
+          style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit', background: C.white }}>
+          <option value="all">All Clients</option>
+          {clients.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+        </select>
+      </div>
+
+      {loading ? <Loader /> : templates.length === 0 ? <EmptyState icon="📋" title="No templates yet" sub="Save high-performing posts as templates or create new ones" /> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {templates.map(t => (
+            <Card key={t.id} style={{ padding: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.navy, marginBottom: 4 }}>{t.name}</div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.blueLight, color: C.blue }}>{t.content_type}</span>
+                    {t.hook_type && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.g100, color: C.g600 }}>{t.hook_type}</span>}
+                    {t.is_global && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.greenLight, color: C.green }}>Global</span>}
+                    {t.profiles && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.orangeLight, color: C.orange }}>{t.profiles.full_name}</span>}
+                    {t.tags && t.tags.split(',').map((tag, i) => (
+                      <span key={i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.g100, color: C.g500 }}>{tag.trim()}</span>
+                    ))}
+                  </div>
+                </div>
+                <Btn v="danger" sz="sm" onClick={() => deleteTemplate(t.id)}>✕</Btn>
+              </div>
+              <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.6, whiteSpace: 'pre-wrap', background: C.g50, padding: 14, borderRadius: 8, border: `1px solid ${C.g200}`, maxHeight: 120, overflow: 'auto' }}>
+                {t.content}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Create Template" width={600}>
+        <Field label="Template Name" value={newName} onChange={setNewName} placeholder="e.g. Contrarian hook — CS health scores" />
+        <Field label="Content" value={newContent} onChange={setNewContent} textarea rows={6} placeholder="The template post content..." />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Sel label="Content Type" value={newType} onChange={setNewType} options={CONTENT_TYPES.map(t => ({ value: t, label: t }))} />
+          <Field label="Hook Type" value={newHook} onChange={setNewHook} placeholder="e.g. contrarian, personal_story" />
+        </div>
+        <Field label="Tags (comma-separated)" value={newTags} onChange={setNewTags} placeholder="e.g. hook-template, high-performing, carousel-structure" />
+        <Sel label="Client (optional — leave blank for global)" value={newClientId} onChange={setNewClientId}
+          options={[{ value: '', label: 'Global template (all clients)' }, ...clients.map(c => ({ value: c.id, label: c.full_name }))]} />
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
+          <Btn v="secondary" onClick={() => setShowCreate(false)}>Cancel</Btn>
+          <Btn onClick={handleCreate} disabled={!newName || !newContent || creating}>{creating ? 'Creating...' : 'Save Template'}</Btn>
+        </div>
+      </Modal>
+    </div>
+  )
 }
 
 function NotificationsPage({ profile }) {
@@ -2732,6 +2889,7 @@ export default function App() {
         case 'content':   return <AdminContent profile={auth.profile} />
         case 'clients':   return <AdminClients profile={auth.profile} />
         case 'reports':   return <AdminReports profile={auth.profile} />
+        case 'templates': return <AdminTemplates profile={auth.profile} />
         case 'notifications': return <NotificationsPage profile={auth.profile} />
         default:          return <AdminDashboard profile={auth.profile} />
       }
