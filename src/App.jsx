@@ -1355,6 +1355,42 @@ function AdminReports({ profile }) {
     setLoadingReport(false); setShowReport(true)
   }
 
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
+
+  const downloadPdf = async () => {
+    setDownloadingPdf(true)
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const session = (await supabase.auth.getSession()).data.session
+      const res = await fetch(`${supabaseUrl}/functions/v1/generate-report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          client: { full_name: client?.full_name, company: client?.company, niche: client?.niche },
+          weeklyData: reportWeekly,
+          postsData: reportPosts,
+          periodStart: reportFrom,
+          periodEnd: reportTo,
+        })
+      })
+      const data = await res.json()
+      if (data.pdf) {
+        // data.pdf is a data URI — trigger download
+        const link = document.createElement('a')
+        link.href = data.pdf
+        link.download = `LinkedIn_Report_${client?.full_name?.replace(/\s+/g, '_')}_${reportFrom}_${reportTo}.pdf`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+      } else {
+        alert(data.error || 'Failed to generate PDF')
+      }
+    } catch (e) {
+      alert(`PDF generation failed: ${e.message}. Make sure the generate-report Edge Function is deployed.`)
+    }
+    setDownloadingPdf(false)
+  }
+
   const rTotalImps = reportWeekly.reduce((s, d) => s + (d.impressions || 0), 0)
   const rTotalEng = reportWeekly.reduce((s, d) => s + (d.likes || 0) + (d.comments || 0) + (d.shares || 0), 0)
   const rAvgEngRate = rTotalImps ? ((rTotalEng / rTotalImps) * 100).toFixed(1) : '0'
@@ -1602,7 +1638,10 @@ function AdminReports({ profile }) {
         </div>
         <div style={{ display:'flex', justifyContent:'flex-end', gap:12, marginTop:20, paddingTop:16, borderTop:`1px solid ${C.g200}` }}>
           <Btn v="secondary" onClick={() => setShowReport(false)}>Close</Btn>
-          <Btn onClick={() => window.print()}>Print / Save PDF</Btn>
+          <Btn v="secondary" onClick={() => window.print()}>Print Preview</Btn>
+          <Btn v="orange" onClick={downloadPdf} disabled={downloadingPdf}>
+            {downloadingPdf ? 'Generating PDF...' : 'Download PDF'}
+          </Btn>
         </div>
       </Modal>
     </div>

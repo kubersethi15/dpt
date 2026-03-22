@@ -71,7 +71,7 @@
 | Report: content mix breakdown | ✅ | Post type distribution |
 | Report: post performance ranking | ✅ | Ranked by impressions with eng rate, best performer highlighted |
 | Print / Save PDF | ✅ | Browser print (functional but basic) |
-| Server-side PDF generation | 📋 | Proper branded PDF like the ReportLab reports we built before |
+| Server-side PDF generation | ✅ | Edge Function generates branded PDF with cover, KPIs, weekly trends, post rankings. Download button in report modal |
 | Report: follower growth chart | 📋 | Need daily follower data or derive from weekly |
 | Report: engagement rate trend over time | 📋 | Week-over-week eng rate chart |
 | Report: top vs bottom performing posts comparison | 📋 | Side-by-side analysis |
