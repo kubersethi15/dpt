@@ -1304,7 +1304,7 @@ function AdminReports({ profile }) {
     if (!selClient || !dateFrom || !dateTo) return
     setLoadingPosts(true)
     const { data: posts } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id', selClient)
-      .eq('status', 'posted').gte('posted_date', dateFrom).lte('posted_date', dateTo).order('posted_date', { ascending: true })
+      .not('posted_date', 'is', null).gte('posted_date', dateFrom).lte('posted_date', dateTo).order('posted_date', { ascending: true })
     setPostedPosts(posts || [])
     const metrics = {}
     ;(posts || []).forEach(p => {
@@ -1351,8 +1351,10 @@ function AdminReports({ profile }) {
     const { data: wkData } = await supabase.from('report_data').select('*').eq('client_id', selClient)
       .gte('week_start', reportFrom).lte('week_start', reportTo).order('week_start', { ascending: true })
     setReportWeekly(wkData || [])
-    const { data: pData } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id', selClient)
-      .eq('status', 'posted').gte('posted_date', reportFrom).lte('posted_date', reportTo).order('posted_date', { ascending: true })
+    const { data: pData, error: pErr } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id', selClient)
+      .not('posted_date', 'is', null).gte('posted_date', reportFrom).lte('posted_date', reportTo).order('posted_date', { ascending: true })
+    if (pErr) console.error('Report posts error:', pErr)
+    console.log('Report posts:', pData?.length, 'found. With metrics:', pData?.filter(p => p.post_metrics?.length > 0).length)
     setReportPosts(pData || [])
     setLoadingReport(false); setShowReport(true)
   }
