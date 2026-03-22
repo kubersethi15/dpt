@@ -72,9 +72,9 @@
 | Report: post performance ranking | ✅ | Ranked by impressions with eng rate, best performer highlighted |
 | Print / Save PDF | ✅ | Browser print (functional but basic) |
 | Server-side PDF generation | ✅ | Edge Function generates branded PDF with cover, KPIs, weekly trends, post rankings. Download button in report modal |
-| Report: follower growth chart | 📋 | Need daily follower data or derive from weekly |
-| Report: engagement rate trend over time | 📋 | Week-over-week eng rate chart |
-| Report: top vs bottom performing posts comparison | 📋 | Side-by-side analysis |
+| Report: follower growth chart | ✅ | Bar chart with start/end/net growth summary |
+| Report: engagement rate trend over time | ✅ | Color-coded bars with avg, peak, and LinkedIn benchmark |
+| Report: top vs bottom performing posts comparison | ✅ | Side-by-side best vs lowest with full metrics |
 | Report: content recommendations / next steps | 💡 | AI-generated based on what performed well |
 | Automated report scheduling | 💡 | Auto-generate and email monthly |
 | LinkedIn profile audit report | 💡 | Separate report type for prospecting |

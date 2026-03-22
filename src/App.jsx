@@ -1680,6 +1680,101 @@ function AdminReports({ profile }) {
 
           {reportWeekly.length===0 && reportPosts.length===0 && <EmptyState icon="▤" title="No data for this period" sub="Enter weekly data and mark posts as posted with dates in this range" />}
 
+          {/* FOLLOWER GROWTH */}
+          {reportWeekly.length > 1 && (
+            <div style={{ marginBottom: 28 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid ${C.blue}` }}>Follower Growth</h3>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 140, padding: '0 4px' }}>
+                {reportWeekly.map((d, i) => {
+                  const max = Math.max(...reportWeekly.map(r => r.followers || 0))
+                  const min = Math.min(...reportWeekly.filter(r => r.followers > 0).map(r => r.followers))
+                  const range = max - min || 1
+                  const h = ((d.followers - min) / range) * 110 + 15
+                  return (
+                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: C.navy }}>{(d.followers || 0).toLocaleString()}</span>
+                      <div style={{ width: '100%', height: h, background: `linear-gradient(180deg, ${C.blue}, rgba(45,127,249,0.2))`, borderRadius: '6px 6px 0 0' }} />
+                      <span style={{ fontSize: 10, color: C.g400, textAlign: 'center', lineHeight: 1.2 }}>{d.week_label}</span>
+                    </div>
+                  )
+                })}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12, padding: '10px 14px', background: C.g50, borderRadius: 8, fontSize: 13 }}>
+                <span style={{ color: C.g500 }}>Start: <strong style={{ color: C.navy }}>{rFirstFollowers.toLocaleString()}</strong></span>
+                <span style={{ color: C.g500 }}>End: <strong style={{ color: C.navy }}>{rLatestFollowers.toLocaleString()}</strong></span>
+                <span style={{ color: rFollowerNet >= 0 ? C.green : C.red, fontWeight: 600 }}>{rFollowerNet >= 0 ? '+' : ''}{rFollowerNet.toLocaleString()} ({rFollowerGrowth}%)</span>
+              </div>
+            </div>
+          )}
+
+          {/* ENGAGEMENT RATE TREND */}
+          {reportWeekly.length > 1 && (
+            <div style={{ marginBottom: 28 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid #8B5CF6` }}>Engagement Rate Trend</h3>
+              {(() => {
+                const rates = reportWeekly.map(d => {
+                  const eng = (d.likes || 0) + (d.comments || 0) + (d.shares || 0)
+                  return { week: d.week_label, rate: d.impressions ? ((eng / d.impressions) * 100) : 0, impressions: d.impressions || 0, eng }
+                })
+                const maxRate = Math.max(...rates.map(r => r.rate))
+                const avgRate = rates.reduce((s, r) => s + r.rate, 0) / rates.length
+                return (
+                  <div>
+                    <div style={{ marginBottom: 12 }}>
+                      {rates.map((d, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                          <div style={{ width: 90, fontSize: 11, color: C.g500, flexShrink: 0 }}>{d.week}</div>
+                          <div style={{ flex: 1, height: 24, background: C.g100, borderRadius: 6, overflow: 'hidden', position: 'relative' }}>
+                            <div style={{ width: `${maxRate ? (d.rate / maxRate) * 100 : 0}%`, height: '100%', background: d.rate >= 3 ? C.green : d.rate >= 2 ? '#8B5CF6' : C.orange, borderRadius: 6, transition: 'width 0.3s' }} />
+                            <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 11, fontWeight: 600, color: (d.rate / maxRate) > 0.5 ? C.white : C.g600 }}>{d.rate.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: 16, padding: '10px 14px', background: C.g50, borderRadius: 8, fontSize: 13 }}>
+                      <span style={{ color: C.g500 }}>Average: <strong style={{ color: C.navy }}>{avgRate.toFixed(1)}%</strong></span>
+                      <span style={{ color: C.g500 }}>Peak: <strong style={{ color: C.green }}>{maxRate.toFixed(1)}%</strong></span>
+                      <span style={{ color: C.g500 }}>LinkedIn benchmark: <strong style={{ color: C.g600 }}>2-3%</strong></span>
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+          )}
+
+          {/* TOP VS BOTTOM POST COMPARISON */}
+          {postsWithMetrics.length >= 2 && (() => {
+            const top = postsWithMetrics[0]
+            const bottom = postsWithMetrics[postsWithMetrics.length - 1]
+            const topEng = (top.m.likes||0)+(top.m.comments||0)+(top.m.shares||0)
+            const botEng = (bottom.m.likes||0)+(bottom.m.comments||0)+(bottom.m.shares||0)
+            const topRate = top.m.impressions ? ((topEng/top.m.impressions)*100).toFixed(1) : '0'
+            const botRate = bottom.m.impressions ? ((botEng/bottom.m.impressions)*100).toFixed(1) : '0'
+            return (
+              <div style={{ marginBottom: 28 }}>
+                <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid ${C.red}` }}>Best vs Lowest Performer</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                  {[{ p: top, label: 'Best', color: C.green, rate: topRate, eng: topEng }, { p: bottom, label: 'Lowest', color: C.red, rate: botRate, eng: botEng }].map((item, i) => (
+                    <div key={i} style={{ padding: 16, borderRadius: 10, border: `2px solid ${item.color}33`, background: i === 0 ? C.greenLight : C.redLight }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: item.color, textTransform: 'uppercase', letterSpacing: 1 }}>{item.label} Performer</span>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{item.rate}% eng</span>
+                      </div>
+                      <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.5, marginBottom: 10, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{item.p.content}</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6, fontSize: 12, color: C.g500 }}>
+                        <span>{(item.p.m.impressions||0).toLocaleString()} impressions</span>
+                        <span>{item.p.m.likes||0} likes</span>
+                        <span>{item.p.m.comments||0} comments</span>
+                        <span>{item.p.m.shares||0} shares</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: C.g400, marginTop: 6 }}>{item.p.posted_date && new Date(item.p.posted_date+'T00:00:00').toLocaleDateString('en-AU',{weekday:'long',month:'short',day:'numeric'})} · {item.p.content_type}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
+
           <div style={{ marginTop:28, padding:16, background:C.g50, borderRadius:8, textAlign:'center', fontSize:12, color:C.g400, borderTop:`2px solid ${C.g200}` }}>
             Confidential — Prepared by DPT Agency — {new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'})}
           </div>
