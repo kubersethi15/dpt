@@ -77,8 +77,8 @@
 | Report: top vs bottom performing posts comparison | ✅ | Side-by-side best vs lowest with full metrics |
 | Report: content recommendations / next steps | 💡 | AI-generated based on what performed well |
 | Automated report scheduling | 💡 | Auto-generate and email monthly |
-| LinkedIn profile audit report | 💡 | Separate report type for prospecting |
-| CSV/Excel data import for metrics | 💡 | Paste or upload instead of manual entry |
+| LinkedIn profile audit report | ✅ | Full audit tool: intake form, AI analysis with 8 scored categories, strengths/improvements/quick wins, branded report |
+| CSV/Excel data import for metrics | ✅ | Upload CSV, preview data, auto-map columns, import to weekly metrics |
 
 ---
 

@@ -334,7 +334,7 @@ function LoginPage({ onAuth }) {
 function Sidebar({ profile, view, setView, onLogout, unreadCount = 0 }) {
   const isAdmin = profile?.role === 'admin'
   const items = isAdmin
-    ? [{ id: 'dashboard', label: 'Dashboard', icon: '◉' }, { id: 'create', label: 'Create Content', icon: '⚡' }, { id: 'content', label: 'Content', icon: '✎' }, { id: 'templates', label: 'Templates', icon: '📋' }, { id: 'clients', label: 'Clients', icon: '◎' }, { id: 'reports', label: 'Reports', icon: '▤' }, { id: 'notifications', label: 'Notifications', icon: '🔔', badge: unreadCount }]
+    ? [{ id: 'dashboard', label: 'Dashboard', icon: '◉' }, { id: 'create', label: 'Create Content', icon: '⚡' }, { id: 'content', label: 'Content', icon: '✎' }, { id: 'templates', label: 'Templates', icon: '📋' }, { id: 'clients', label: 'Clients', icon: '◎' }, { id: 'reports', label: 'Reports', icon: '▤' }, { id: 'audit', label: 'Profile Audit', icon: '🔍' }, { id: 'notifications', label: 'Notifications', icon: '🔔', badge: unreadCount }]
     : [{ id: 'my_dashboard', label: 'Dashboard', icon: '◉' }, { id: 'my_content', label: 'My Content', icon: '✎' }, { id: 'my_reports', label: 'My Reports', icon: '▤' }, { id: 'notifications', label: 'Notifications', icon: '🔔', badge: unreadCount }]
 
   return (
@@ -1476,6 +1476,7 @@ function AdminReports({ profile }) {
         </div>
 
         {tab === 'weekly' && (<>
+          <CSVImport clientId={selClient} onImported={refresh} />
           <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}><Btn onClick={() => setShowAdd(true)}>+ Add Weekly Data</Btn></div>
           {loading ? <Loader /> : reportData.length === 0 ? <EmptyState icon="▤" title="No data yet" sub="Add weekly LinkedIn metrics" /> : (
             <Card style={{ overflow: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -2676,6 +2677,405 @@ Create ${numDays} posts distributed across topics. Vary hook types.${config?.day
    NOTIFICATIONS PAGE
    ═══════════════════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════════════════
+   ADMIN: LINKEDIN PROFILE AUDIT TOOL
+   ═══════════════════════════════════════════════════════════════ */
+
+function AdminProfileAudit({ profile }) {
+  const [audits, setAudits] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showCreate, setShowCreate] = useState(false)
+  const [showResults, setShowResults] = useState(null)
+  const [analyzing, setAnalyzing] = useState(false)
+
+  // Form
+  const [form, setForm] = useState({
+    prospect_name: '', prospect_company: '', prospect_title: '', prospect_niche: '',
+    prospect_linkedin_url: '', headline: '', about_section: '', has_banner: false,
+    has_featured: false, has_creator_mode: false, follower_count: 0, posting_frequency: '',
+    recent_hooks: '', content_types_used: '', hashtag_usage: '', cta_style: '',
+    engagement_level: '', profile_notes: ''
+  })
+
+  const updateForm = (k, v) => setForm(prev => ({ ...prev, [k]: v }))
+
+  const fetchAudits = async () => {
+    setLoading(true)
+    const { data } = await supabase.from('profile_audits').select('*').order('created_at', { ascending: false })
+    setAudits(data || [])
+    setLoading(false)
+  }
+
+  useEffect(() => { fetchAudits() }, [])
+
+  const runAudit = async () => {
+    setAnalyzing(true)
+    try {
+      // Save the audit first
+      const { data: saved } = await supabase.from('profile_audits').insert({
+        ...form, follower_count: parseInt(form.follower_count) || 0,
+        created_by: profile.id, status: 'draft'
+      }).select().single()
+
+      if (!saved) { setAnalyzing(false); return }
+
+      // Run AI analysis
+      const raw = await callClaude(
+        `You are a senior LinkedIn strategist performing a profile audit for a social media agency's prospective client. Be specific, actionable, and honest — don't sugarcoat weaknesses.
+
+Score each category 1-10 and provide specific recommendations. 
+
+OUTPUT: Return EXACTLY a JSON object with this structure:
+{
+  "overall_score": <number 1-100>,
+  "categories": [
+    {"name": "Headline", "score": <1-10>, "analysis": "...", "recommendation": "..."},
+    {"name": "About Section", "score": <1-10>, "analysis": "...", "recommendation": "..."},
+    {"name": "Visual Branding", "score": <1-10>, "analysis": "...", "recommendation": "..."},
+    {"name": "Content Strategy", "score": <1-10>, "analysis": "...", "recommendation": "..."},
+    {"name": "Hook Quality", "score": <1-10>, "analysis": "...", "recommendation": "..."},
+    {"name": "Engagement & CTAs", "score": <1-10>, "analysis": "...", "recommendation": "..."},
+    {"name": "Posting Consistency", "score": <1-10>, "analysis": "...", "recommendation": "..."},
+    {"name": "Overall Positioning", "score": <1-10>, "analysis": "...", "recommendation": "..."}
+  ],
+  "executive_summary": "3-4 sentence overview",
+  "top_strengths": ["strength1", "strength2", "strength3"],
+  "critical_improvements": ["improvement1", "improvement2", "improvement3"],
+  "quick_wins": ["quick_win1", "quick_win2", "quick_win3"],
+  "content_recommendations": "2-3 specific content strategy recommendations"
+}
+No markdown, no preamble. Just JSON.`,
+        `Audit this LinkedIn profile:
+
+NAME: ${form.prospect_name}
+TITLE: ${form.prospect_title}
+COMPANY: ${form.prospect_company}
+NICHE: ${form.prospect_niche}
+FOLLOWERS: ${form.follower_count}
+LINKEDIN URL: ${form.prospect_linkedin_url}
+
+HEADLINE: ${form.headline || '(not provided)'}
+ABOUT SECTION: ${form.about_section || '(not provided)'}
+HAS BANNER: ${form.has_banner ? 'Yes' : 'No'}
+HAS FEATURED SECTION: ${form.has_featured ? 'Yes' : 'No'}
+HAS CREATOR MODE: ${form.has_creator_mode ? 'Yes' : 'No'}
+POSTING FREQUENCY: ${form.posting_frequency || '(not provided)'}
+RECENT POST HOOKS: ${form.recent_hooks || '(not provided)'}
+CONTENT TYPES USED: ${form.content_types_used || '(not provided)'}
+HASHTAG USAGE: ${form.hashtag_usage || '(not provided)'}
+CTA STYLE: ${form.cta_style || '(not provided)'}
+ENGAGEMENT LEVEL: ${form.engagement_level || '(not provided)'}
+ADDITIONAL NOTES: ${form.profile_notes || '(none)'}
+
+Provide a thorough, honest audit. Return ONLY JSON.`,
+        false
+      )
+
+      const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
+      const match = cleaned.match(/\{[\s\S]*\}/)
+      if (match) {
+        const results = JSON.parse(match[0])
+        await supabase.from('profile_audits').update({
+          audit_results: results, overall_score: results.overall_score || 0, status: 'analyzed'
+        }).eq('id', saved.id)
+      }
+    } catch (e) { console.error('Audit failed:', e) }
+    setAnalyzing(false)
+    setShowCreate(false)
+    setForm({ prospect_name: '', prospect_company: '', prospect_title: '', prospect_niche: '', prospect_linkedin_url: '', headline: '', about_section: '', has_banner: false, has_featured: false, has_creator_mode: false, follower_count: 0, posting_frequency: '', recent_hooks: '', content_types_used: '', hashtag_usage: '', cta_style: '', engagement_level: '', profile_notes: '' })
+    fetchAudits()
+  }
+
+  const deleteAudit = async (id) => {
+    if (!confirm('Delete this audit?')) return
+    await supabase.from('profile_audits').delete().eq('id', id)
+    fetchAudits()
+  }
+
+  const viewAudit = audits.find(a => a.id === showResults)
+  const results = viewAudit?.audit_results || {}
+
+  const ScoreBar = ({ score, max = 10 }) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ flex: 1, height: 8, background: C.g100, borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{ width: `${(score / max) * 100}%`, height: '100%', borderRadius: 4, background: score >= 7 ? C.green : score >= 4 ? C.yellow : C.red }} />
+      </div>
+      <span style={{ fontSize: 13, fontWeight: 700, color: score >= 7 ? C.green : score >= 4 ? C.yellow : C.red, width: 28 }}>{score}/{max}</span>
+    </div>
+  )
+
+  return (
+    <div className="fade-in">
+      <PageHeader title="LinkedIn Profile Audit" subtitle="Prospect audits for client acquisition"
+        action={<Btn onClick={() => setShowCreate(true)}>+ New Audit</Btn>} />
+
+      {loading ? <Loader /> : audits.length === 0 ? <EmptyState icon="🔍" title="No audits yet" sub="Create a profile audit to use as a prospecting tool" /> : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}>
+          {audits.map(a => (
+            <Card key={a.id} onClick={() => a.status === 'analyzed' && setShowResults(a.id)} style={{ cursor: a.status === 'analyzed' ? 'pointer' : 'default' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>{a.prospect_name}</div>
+                  <div style={{ fontSize: 13, color: C.g500 }}>{a.prospect_title}{a.prospect_company ? ` at ${a.prospect_company}` : ''}</div>
+                </div>
+                <Btn v="danger" sz="sm" onClick={e => { e.stopPropagation(); deleteAudit(a.id) }}>✕</Btn>
+              </div>
+              {a.status === 'analyzed' && a.overall_score > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 48, height: 48, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 800, color: C.white, background: a.overall_score >= 70 ? C.green : a.overall_score >= 40 ? C.yellow : C.red }}>{a.overall_score}</div>
+                  <div style={{ fontSize: 12, color: C.g500 }}>Overall Score<br /><span style={{ color: C.blue, fontWeight: 600 }}>Click to view report</span></div>
+                </div>
+              )}
+              {a.status === 'draft' && <div style={{ fontSize: 12, color: C.g400 }}>Analysis pending...</div>}
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* CREATE AUDIT MODAL */}
+      <Modal open={showCreate} onClose={() => !analyzing && setShowCreate(false)} title="New Profile Audit" width={680}>
+        {analyzing ? (
+          <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+            <Loader />
+            <div style={{ fontSize: 16, fontWeight: 600, color: C.navy, marginTop: 16 }}>Analyzing {form.prospect_name}'s profile...</div>
+            <div style={{ fontSize: 13, color: C.g500, marginTop: 8 }}>Scoring headline, about section, content strategy, hooks, engagement, and more</div>
+          </div>
+        ) : (<>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.blue, marginBottom: 16 }}>Fill in what you can see on their LinkedIn profile. More data = better audit.</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Name *" value={form.prospect_name} onChange={v => updateForm('prospect_name', v)} placeholder="Jane Smith" />
+            <Field label="Company" value={form.prospect_company} onChange={v => updateForm('prospect_company', v)} placeholder="Acme Corp" />
+            <Field label="Title" value={form.prospect_title} onChange={v => updateForm('prospect_title', v)} placeholder="VP of Marketing" />
+            <Field label="Niche" value={form.prospect_niche} onChange={v => updateForm('prospect_niche', v)} placeholder="SaaS, Finance, etc." />
+            <Field label="LinkedIn URL" value={form.prospect_linkedin_url} onChange={v => updateForm('prospect_linkedin_url', v)} placeholder="linkedin.com/in/..." />
+            <Field label="Follower Count" value={form.follower_count} onChange={v => updateForm('follower_count', v)} type="number" placeholder="0" />
+          </div>
+          <Field label="Headline (copy from their profile)" value={form.headline} onChange={v => updateForm('headline', v)} textarea rows={2} placeholder="Their LinkedIn headline..." />
+          <Field label="About Section (copy first few lines)" value={form.about_section} onChange={v => updateForm('about_section', v)} textarea rows={4} placeholder="Their about section..." />
+          <div style={{ display: 'flex', gap: 20, marginBottom: 16 }}>
+            {[['has_banner', 'Has custom banner?'], ['has_featured', 'Has featured section?'], ['has_creator_mode', 'Creator mode on?']].map(([k, label]) => (
+              <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: C.g600, cursor: 'pointer' }}>
+                <input type="checkbox" checked={form[k]} onChange={e => updateForm(k, e.target.checked)} /> {label}
+              </label>
+            ))}
+          </div>
+          <Field label="Posting Frequency" value={form.posting_frequency} onChange={v => updateForm('posting_frequency', v)} placeholder="e.g. 3x/week, daily, sporadic" />
+          <Field label="Recent Post Hooks (copy first 2 lines of their last 5 posts)" value={form.recent_hooks} onChange={v => updateForm('recent_hooks', v)} textarea rows={4} placeholder="Hook 1: ...\nHook 2: ...\nHook 3: ..." />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Content Types Used" value={form.content_types_used} onChange={v => updateForm('content_types_used', v)} placeholder="Text, carousels, videos, polls" />
+            <Field label="Hashtag Usage" value={form.hashtag_usage} onChange={v => updateForm('hashtag_usage', v)} placeholder="e.g. 5-10 per post, none, 2-3" />
+            <Field label="CTA Style" value={form.cta_style} onChange={v => updateForm('cta_style', v)} placeholder='e.g. "Follow me", "Link in comments"' />
+            <Field label="Engagement Level" value={form.engagement_level} onChange={v => updateForm('engagement_level', v)} placeholder="e.g. 10-20 likes, 50+ comments" />
+          </div>
+          <Field label="Additional Notes" value={form.profile_notes} onChange={v => updateForm('profile_notes', v)} textarea rows={2} placeholder="Anything else you noticed..." />
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
+            <Btn v="secondary" onClick={() => setShowCreate(false)}>Cancel</Btn>
+            <Btn v="orange" sz="lg" onClick={runAudit} disabled={!form.prospect_name}>🔍 Run Audit</Btn>
+          </div>
+        </>)}
+      </Modal>
+
+      {/* AUDIT RESULTS MODAL */}
+      <Modal open={!!showResults} onClose={() => setShowResults(null)} title={`Audit: ${viewAudit?.prospect_name || ''}`} width={740}>
+        {viewAudit && results.categories && (
+          <div>
+            {/* Score Header */}
+            <div style={{ display: 'flex', gap: 20, alignItems: 'center', padding: 24, background: `linear-gradient(135deg, ${C.navy}, #1a2744)`, borderRadius: 12, marginBottom: 24, color: C.white }}>
+              <div style={{ width: 80, height: 80, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, fontWeight: 900, background: results.overall_score >= 70 ? C.green : results.overall_score >= 40 ? C.yellow : C.red, flexShrink: 0 }}>
+                {results.overall_score}
+              </div>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 700 }}>{viewAudit.prospect_name}</div>
+                <div style={{ fontSize: 14, color: C.g300 }}>{viewAudit.prospect_title}{viewAudit.prospect_company ? ` at ${viewAudit.prospect_company}` : ''}</div>
+                <div style={{ fontSize: 13, color: C.g400, marginTop: 6 }}>{results.executive_summary}</div>
+              </div>
+            </div>
+
+            {/* Category Scores */}
+            <div style={{ marginBottom: 24 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 14 }}>Category Breakdown</h3>
+              {results.categories.map((cat, i) => (
+                <div key={i} style={{ padding: 14, marginBottom: 8, borderRadius: 10, background: i % 2 ? C.g50 : C.white, border: `1px solid ${C.g200}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: C.navy }}>{cat.name}</span>
+                  </div>
+                  <ScoreBar score={cat.score} />
+                  <div style={{ fontSize: 13, color: C.g600, marginTop: 6, lineHeight: 1.5 }}>{cat.analysis}</div>
+                  <div style={{ fontSize: 13, color: C.blue, marginTop: 4, lineHeight: 1.5 }}>→ {cat.recommendation}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Strengths & Improvements */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+              <Card style={{ background: C.greenLight, border: `1px solid ${C.green}33` }}>
+                <h4 style={{ fontSize: 14, fontWeight: 700, color: C.green, marginBottom: 10 }}>Top Strengths</h4>
+                {(results.top_strengths || []).map((s, i) => (
+                  <div key={i} style={{ fontSize: 13, color: C.g700, marginBottom: 6, display: 'flex', gap: 8 }}>
+                    <span style={{ color: C.green }}>✓</span> {s}
+                  </div>
+                ))}
+              </Card>
+              <Card style={{ background: C.redLight, border: `1px solid ${C.red}33` }}>
+                <h4 style={{ fontSize: 14, fontWeight: 700, color: C.red, marginBottom: 10 }}>Critical Improvements</h4>
+                {(results.critical_improvements || []).map((s, i) => (
+                  <div key={i} style={{ fontSize: 13, color: C.g700, marginBottom: 6, display: 'flex', gap: 8 }}>
+                    <span style={{ color: C.red }}>!</span> {s}
+                  </div>
+                ))}
+              </Card>
+            </div>
+
+            {/* Quick Wins */}
+            {results.quick_wins && (
+              <Card style={{ background: C.yellowLight, border: `1px solid ${C.yellow}33`, marginBottom: 24 }}>
+                <h4 style={{ fontSize: 14, fontWeight: 700, color: C.g800, marginBottom: 10 }}>Quick Wins (implement in 24 hours)</h4>
+                {results.quick_wins.map((w, i) => (
+                  <div key={i} style={{ fontSize: 13, color: C.g700, marginBottom: 6, display: 'flex', gap: 8 }}>
+                    <span style={{ color: C.yellow }}>⚡</span> {w}
+                  </div>
+                ))}
+              </Card>
+            )}
+
+            {/* Content Recommendations */}
+            {results.content_recommendations && (
+              <Card style={{ marginBottom: 16 }}>
+                <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, marginBottom: 8 }}>Content Strategy Recommendations</h4>
+                <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.6 }}>{results.content_recommendations}</div>
+              </Card>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, paddingTop: 16, borderTop: `1px solid ${C.g200}` }}>
+              <Btn v="secondary" onClick={() => setShowResults(null)}>Close</Btn>
+              <Btn onClick={() => window.print()}>Print / Save PDF</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  )
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CSV IMPORT FOR LINKEDIN METRICS
+   ═══════════════════════════════════════════════════════════════ */
+
+function CSVImport({ clientId, onImported }) {
+  const [parsing, setParsing] = useState(false)
+  const [preview, setPreview] = useState(null)
+  const [importing, setImporting] = useState(false)
+
+  const parseCSV = (text) => {
+    const lines = text.trim().split('\n')
+    if (lines.length < 2) return null
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, '').toLowerCase())
+    const rows = lines.slice(1).map(line => {
+      const vals = line.split(',').map(v => v.trim().replace(/"/g, ''))
+      const row = {}
+      headers.forEach((h, i) => { row[h] = vals[i] || '' })
+      return row
+    })
+    return { headers, rows }
+  }
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setParsing(true)
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const data = parseCSV(ev.target.result)
+      setPreview(data)
+      setParsing(false)
+    }
+    reader.readAsText(file)
+  }
+
+  const mapAndImport = async () => {
+    if (!preview || !clientId) return
+    setImporting(true)
+
+    for (const row of preview.rows) {
+      // Try to detect LinkedIn's export format
+      const date = row.date || row.week || row['week start'] || row['start date'] || ''
+      if (!date) continue
+
+      // Parse date
+      let weekStart = ''
+      try {
+        const d = new Date(date)
+        if (!isNaN(d.getTime())) weekStart = d.toISOString().split('T')[0]
+      } catch { continue }
+      if (!weekStart) continue
+
+      const impressions = parseInt(row.impressions || row['total impressions'] || 0) || 0
+      const likes = parseInt(row.likes || row.reactions || 0) || 0
+      const comments = parseInt(row.comments || 0) || 0
+      const shares = parseInt(row.shares || row.reposts || 0) || 0
+      const profileViews = parseInt(row['profile views'] || row.profile_views || 0) || 0
+      const followers = parseInt(row.followers || row['total followers'] || row['follower count'] || 0) || 0
+      const search = parseInt(row['search appearances'] || row.search_appearances || row.search || 0) || 0
+
+      await supabase.from('report_data').upsert({
+        client_id: clientId,
+        week_label: row['week'] || row['week label'] || `Week of ${weekStart}`,
+        week_start: weekStart,
+        impressions, likes, comments, shares,
+        profile_views: profileViews, followers,
+        search_appearances: search,
+      }, { onConflict: 'client_id,week_start' })
+    }
+
+    setImporting(false)
+    setPreview(null)
+    if (onImported) onImported()
+  }
+
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.navy }}>Import from CSV</div>
+          <div style={{ fontSize: 12, color: C.g500 }}>Upload a LinkedIn analytics export or any CSV with weekly data</div>
+        </div>
+        {!preview && (
+          <label style={{ cursor: 'pointer' }}>
+            <Btn v="secondary" sz="sm" disabled={parsing}>{parsing ? 'Reading...' : 'Upload CSV'}</Btn>
+            <input type="file" accept=".csv,.tsv,.txt" onChange={handleFile} style={{ display: 'none' }} />
+          </label>
+        )}
+      </div>
+
+      {preview && (
+        <div>
+          <div style={{ fontSize: 12, color: C.g500, marginBottom: 8 }}>{preview.rows.length} rows found. Columns: {preview.headers.join(', ')}</div>
+          <div style={{ overflow: 'auto', maxHeight: 200, borderRadius: 8, border: `1px solid ${C.g200}`, marginBottom: 12 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+              <thead>
+                <tr style={{ background: C.navy, color: C.white }}>
+                  {preview.headers.map(h => <th key={h} style={{ padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {preview.rows.slice(0, 5).map((row, i) => (
+                  <tr key={i} style={{ background: i % 2 ? C.g50 : C.white }}>
+                    {preview.headers.map(h => <td key={h} style={{ padding: '4px 8px' }}>{row[h]}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <Btn v="secondary" sz="sm" onClick={() => setPreview(null)}>Cancel</Btn>
+            <Btn v="success" sz="sm" onClick={mapAndImport} disabled={importing}>{importing ? 'Importing...' : `Import ${preview.rows.length} rows`}</Btn>
+          </div>
+        </div>
+      )}
+    </Card>
+  )
+}
+
 const NOTIF_LABELS = {
   content_ready_for_review: { label: 'Content ready for review', icon: '✎', color: C.orange },
   content_approved: { label: 'Content approved', icon: '✓', color: C.green },
@@ -2890,6 +3290,7 @@ export default function App() {
         case 'clients':   return <AdminClients profile={auth.profile} />
         case 'reports':   return <AdminReports profile={auth.profile} />
         case 'templates': return <AdminTemplates profile={auth.profile} />
+        case 'audit':     return <AdminProfileAudit profile={auth.profile} />
         case 'notifications': return <NotificationsPage profile={auth.profile} />
         default:          return <AdminDashboard profile={auth.profile} />
       }
