@@ -25,7 +25,7 @@
 | Graphic upload per post | ✅ | Via Supabase Storage |
 | Comment thread per post | ✅ | Both admin and client can comment |
 | Post editing by admin | ✅ | Admin can edit post content inline in detail panel |
-| Graphic approval as separate status | 📋 | Currently no distinction between copy and graphic approval |
+| Graphic approval as separate status | ✅ | Separate graphic_status field, client can approve/reject graphic independently |
 | Bulk status changes | 📋 | Select multiple posts, change status at once |
 | Bulk scheduling (drag-and-drop calendar) | 💡 | Visual drag to reschedule |
 | Post duplication / templates | 💡 | Clone a high-performing post as template |
@@ -43,7 +43,7 @@
 | Password reset / forgot password | ✅ | Forgot password link on login, sends reset email |
 | Email notifications on new content to review | 📋 | Clients don't know when new content arrives |
 | Client dashboard with engagement metrics | 📋 | Currently basic — needs proper KPI dashboard |
-| Graphic preview and approval | 📋 | Tied to graphic approval status feature |
+| Graphic preview and approval | ✅ | Client can approve/reject graphics with feedback |
 | Mobile-responsive client portal | 💡 | Works but not optimised for mobile |
 
 ### 3. Admin Dashboard
@@ -105,7 +105,7 @@
 | Email on new content for review | 📋 | Via Supabase triggers + Resend/SendGrid |
 | Email on client approval/rejection | 📋 | So DPT knows immediately |
 | Email on comment added | 💡 | |
-| In-app notification badges | 📋 | Show count of pending items |
+| In-app notification badges | ✅ | Red badge on sidebar, polls every 30s, notifications page |
 | Slack integration for DPT | 💡 | Post status changes to a Slack channel |
 | Weekly digest email to clients | 💡 | Summary of upcoming content |
 

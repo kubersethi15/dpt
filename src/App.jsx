@@ -331,11 +331,11 @@ function LoginPage({ onAuth }) {
    SIDEBAR NAVIGATION
    ═══════════════════════════════════════════════════════════════ */
 
-function Sidebar({ profile, view, setView, onLogout }) {
+function Sidebar({ profile, view, setView, onLogout, unreadCount = 0 }) {
   const isAdmin = profile?.role === 'admin'
   const items = isAdmin
-    ? [{ id: 'dashboard', label: 'Dashboard', icon: '◉' }, { id: 'create', label: 'Create Content', icon: '⚡' }, { id: 'content', label: 'Content', icon: '✎' }, { id: 'clients', label: 'Clients', icon: '◎' }, { id: 'reports', label: 'Reports', icon: '▤' }]
-    : [{ id: 'my_content', label: 'My Content', icon: '✎' }, { id: 'my_reports', label: 'My Reports', icon: '▤' }]
+    ? [{ id: 'dashboard', label: 'Dashboard', icon: '◉' }, { id: 'create', label: 'Create Content', icon: '⚡' }, { id: 'content', label: 'Content', icon: '✎' }, { id: 'clients', label: 'Clients', icon: '◎' }, { id: 'reports', label: 'Reports', icon: '▤' }, { id: 'notifications', label: 'Notifications', icon: '🔔', badge: unreadCount }]
+    : [{ id: 'my_content', label: 'My Content', icon: '✎' }, { id: 'my_reports', label: 'My Reports', icon: '▤' }, { id: 'notifications', label: 'Notifications', icon: '🔔', badge: unreadCount }]
 
   return (
     <div style={{ width: 220, minHeight: '100vh', background: C.navy, padding: '20px 0', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
@@ -352,7 +352,10 @@ function Sidebar({ profile, view, setView, onLogout }) {
             color: view === it.id ? C.white : 'rgba(255,255,255,0.55)',
           }}>
             <span style={{ fontSize: 16 }}>{it.icon}</span>
-            <span style={{ fontSize: 14, fontWeight: view === it.id ? 600 : 400 }}>{it.label}</span>
+            <span style={{ fontSize: 14, fontWeight: view === it.id ? 600 : 400, flex: 1 }}>{it.label}</span>
+            {it.badge > 0 && (
+              <span style={{ background: C.red, color: C.white, fontSize: 11, fontWeight: 700, borderRadius: 10, padding: '2px 7px', minWidth: 20, textAlign: 'center' }}>{it.badge}</span>
+            )}
           </div>
         ))}
       </nav>
@@ -576,10 +579,44 @@ function PostDetail({ post, profile, onClose, onUpdate }) {
 
         {/* Graphic */}
         <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.g700, marginBottom: 8 }}>Graphic</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.g700 }}>Graphic</div>
+            {post.graphic_url && post.graphic_status && post.graphic_status !== 'none' && (
+              <Badge status={post.graphic_status === 'approved' ? 'approved' : post.graphic_status === 'changes_requested' ? 'changes_requested' : 'pending_review'} />
+            )}
+          </div>
           {post.graphic_url ? (
-            <div style={{ borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.g200}` }}>
-              <img src={post.graphic_url} alt="Post graphic" style={{ width: '100%', display: 'block' }} />
+            <div>
+              <div style={{ borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.g200}`, marginBottom: 10 }}>
+                <img src={post.graphic_url} alt="Post graphic" style={{ width: '100%', display: 'block' }} />
+              </div>
+              {/* Admin: send graphic for review / replace */}
+              {isAdmin && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {(!post.graphic_status || post.graphic_status === 'none' || post.graphic_status === 'changes_requested') && (
+                    <Btn v="orange" sz="sm" onClick={async () => {
+                      await supabase.from('posts').update({ graphic_status: 'pending_review' }).eq('id', post.id)
+                      await supabase.from('notifications').insert({ recipient_id: post.client_id, post_id: post.id, type: 'graphic_ready_for_review' })
+                      onUpdate()
+                    }}>Send Graphic for Review</Btn>
+                  )}
+                  <label style={{ cursor: 'pointer' }}>
+                    <Btn v="secondary" sz="sm" disabled={uploading}>{uploading ? 'Uploading...' : 'Replace Graphic'}</Btn>
+                    <input type="file" accept="image/*" onChange={handleGraphicUpload} style={{ display: 'none' }} />
+                  </label>
+                </div>
+              )}
+              {/* Client: approve/reject graphic */}
+              {isClient && post.graphic_status === 'pending_review' && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Btn v="success" sz="sm" onClick={async () => {
+                    await supabase.from('posts').update({ graphic_status: 'approved' }).eq('id', post.id)
+                    await supabase.from('notifications').insert({ recipient_id: post.created_by || post.client_id, post_id: post.id, type: 'graphic_approved' })
+                    onUpdate()
+                  }}>✓ Approve Graphic</Btn>
+                  <Btn v="orange" sz="sm" onClick={() => setShowChangesFeedback('graphic')}>Request Graphic Changes</Btn>
+                </div>
+              )}
             </div>
           ) : (
             <div style={{ padding: 24, border: `2px dashed ${C.g300}`, borderRadius: 10, textAlign: 'center' }}>
@@ -600,39 +637,61 @@ function PostDetail({ post, profile, onClose, onUpdate }) {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {isAdmin && (
               <>
-                {post.status === 'draft' && <Btn v="orange" sz="sm" onClick={() => updateStatus('pending_review')}>Send for Review</Btn>}
+                {post.status === 'draft' && <Btn v="orange" sz="sm" onClick={async () => {
+                  await updateStatus('pending_review')
+                  await supabase.from('notifications').insert({ recipient_id: post.client_id, post_id: post.id, type: 'content_ready_for_review' })
+                }}>Send for Review</Btn>}
                 {post.status === 'approved' && <Btn v="primary" sz="sm" onClick={() => updateStatus('scheduled')}>Mark Scheduled</Btn>}
                 {post.status === 'scheduled' && <Btn v="success" sz="sm" onClick={() => updateStatus('posted')}>Mark Posted</Btn>}
-                {post.status === 'changes_requested' && <Btn v="orange" sz="sm" onClick={() => updateStatus('pending_review')}>Resubmit for Review</Btn>}
+                {post.status === 'changes_requested' && <Btn v="orange" sz="sm" onClick={async () => {
+                  await updateStatus('pending_review')
+                  await supabase.from('notifications').insert({ recipient_id: post.client_id, post_id: post.id, type: 'content_ready_for_review' })
+                }}>Resubmit for Review</Btn>}
               </>
             )}
             {isClient && (
               <>
-                {post.status === 'pending_review' && !showChangesFeedback && (
+                {post.status === 'pending_review' && showChangesFeedback !== 'copy' && !showChangesFeedback && (
                   <>
-                    <Btn v="success" sz="sm" onClick={() => updateStatus('approved')}>✓ Approve</Btn>
-                    <Btn v="orange" sz="sm" onClick={() => setShowChangesFeedback(true)}>Request Changes</Btn>
+                    <Btn v="success" sz="sm" onClick={async () => {
+                      await updateStatus('approved')
+                      if (post.created_by) await supabase.from('notifications').insert({ recipient_id: post.created_by, post_id: post.id, type: 'content_approved' })
+                    }}>✓ Approve Copy</Btn>
+                    <Btn v="orange" sz="sm" onClick={() => setShowChangesFeedback('copy')}>Request Changes</Btn>
                   </>
                 )}
               </>
             )}
           </div>
 
-          {/* Changes Requested Feedback Form */}
+          {/* Changes Requested Feedback Form (for both copy and graphic) */}
           {isClient && showChangesFeedback && (
             <div style={{ marginTop: 12, padding: 16, background: C.orangeLight, borderRadius: 10, border: `1px solid ${C.orange}33` }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: C.g700, marginBottom: 8 }}>What changes do you need?</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.g700, marginBottom: 8 }}>
+                {showChangesFeedback === 'graphic' ? 'What changes do you need on the graphic?' : 'What changes do you need?'}
+              </div>
               <textarea
                 value={changesFeedback}
                 onChange={e => setChangesFeedback(e.target.value)}
-                placeholder="Describe the changes you'd like — e.g. soften the tone, change the hook, remove a specific line..."
+                placeholder={showChangesFeedback === 'graphic' ? 'Describe graphic changes — e.g. wrong colours, text too small, use different image...' : 'Describe the changes — e.g. soften the tone, change the hook, remove a specific line...'}
                 rows={4}
                 style={{ width: '100%', padding: 12, borderRadius: 8, border: `1px solid ${C.orange}55`, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.6, resize: 'vertical', background: C.white }}
                 autoFocus
               />
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
                 <Btn v="secondary" sz="sm" onClick={() => { setShowChangesFeedback(false); setChangesFeedback('') }}>Cancel</Btn>
-                <Btn v="orange" sz="sm" onClick={submitChangesRequested} disabled={!changesFeedback.trim()}>Submit Feedback</Btn>
+                <Btn v="orange" sz="sm" onClick={async () => {
+                  if (!changesFeedback.trim()) return
+                  await supabase.from('post_comments').insert({ post_id: post.id, author_id: profile.id, author_name: profile.full_name, content: `[${showChangesFeedback === 'graphic' ? 'GRAPHIC' : 'COPY'} FEEDBACK] ${changesFeedback.trim()}`, is_client: true })
+                  if (showChangesFeedback === 'graphic') {
+                    await supabase.from('posts').update({ graphic_status: 'changes_requested' }).eq('id', post.id)
+                    if (post.created_by) await supabase.from('notifications').insert({ recipient_id: post.created_by, post_id: post.id, type: 'graphic_changes_requested' })
+                  } else {
+                    await supabase.from('posts').update({ status: 'changes_requested' }).eq('id', post.id)
+                    if (post.created_by) await supabase.from('notifications').insert({ recipient_id: post.created_by, post_id: post.id, type: 'content_changes_requested' })
+                  }
+                  setChangesFeedback(''); setShowChangesFeedback(false); onUpdate()
+                }} disabled={!changesFeedback.trim()}>Submit Feedback</Btn>
               </div>
             </div>
           )}
@@ -2071,13 +2130,86 @@ Create ${numDays} posts distributed across topics. Vary hook types.${config?.day
    MAIN APP
    ═══════════════════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════════════════
+   NOTIFICATIONS PAGE
+   ═══════════════════════════════════════════════════════════════ */
+
+const NOTIF_LABELS = {
+  content_ready_for_review: { label: 'Content ready for review', icon: '✎', color: C.orange },
+  content_approved: { label: 'Content approved', icon: '✓', color: C.green },
+  content_changes_requested: { label: 'Changes requested on content', icon: '↩', color: C.orange },
+  graphic_ready_for_review: { label: 'Graphic ready for review', icon: '🖼', color: C.blue },
+  graphic_approved: { label: 'Graphic approved', icon: '✓', color: C.green },
+  graphic_changes_requested: { label: 'Changes requested on graphic', icon: '↩', color: C.orange },
+  comment_added: { label: 'New comment', icon: '💬', color: C.blue },
+}
+
+function NotificationsPage({ profile }) {
+  const [notifications, setNotifications] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const fetchNotifs = async () => {
+    setLoading(true)
+    const { data } = await supabase.from('notifications').select('*, posts(content, profiles!posts_client_id_fkey(full_name))')
+      .eq('recipient_id', profile.id).order('created_at', { ascending: false }).limit(50)
+    setNotifications(data || [])
+    setLoading(false)
+    // Mark all as read
+    await supabase.from('notifications').update({ read: true }).eq('recipient_id', profile.id).eq('read', false)
+  }
+
+  useEffect(() => { fetchNotifs() }, [profile.id])
+
+  return (
+    <div className="fade-in">
+      <PageHeader title="Notifications" subtitle={`${notifications.filter(n => !n.read).length} unread`} />
+      {loading ? <Loader /> : notifications.length === 0 ? <EmptyState icon="🔔" title="No notifications" sub="You'll see updates here when content moves through the workflow" /> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {notifications.map(n => {
+            const meta = NOTIF_LABELS[n.type] || { label: n.type, icon: '•', color: C.g500 }
+            const postPreview = n.posts?.content?.slice(0, 80) + (n.posts?.content?.length > 80 ? '...' : '')
+            const clientName = n.posts?.profiles?.full_name
+            return (
+              <div key={n.id} style={{ display: 'flex', gap: 14, padding: '14px 16px', borderRadius: 10, background: n.read ? C.white : C.blueLight, border: `1px solid ${n.read ? C.g200 : C.blue + '33'}` }}>
+                <div style={{ width: 36, height: 36, borderRadius: '50%', background: meta.color + '15', color: meta.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0 }}>{meta.icon}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: C.navy }}>{meta.label}</div>
+                  {clientName && <div style={{ fontSize: 12, color: C.g500, marginTop: 2 }}>{clientName}</div>}
+                  {postPreview && <div style={{ fontSize: 13, color: C.g600, marginTop: 4, lineHeight: 1.4 }}>{postPreview}</div>}
+                  <div style={{ fontSize: 11, color: C.g400, marginTop: 4 }}>{new Date(n.created_at).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                </div>
+                {!n.read && <div style={{ width: 8, height: 8, borderRadius: '50%', background: C.blue, flexShrink: 0, marginTop: 4 }} />}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MAIN APP
+   ═══════════════════════════════════════════════════════════════ */
+
 export default function App() {
   const auth = useAuth()
   const [view, setView] = useState('')
+  const [unreadCount, setUnreadCount] = useState(0)
 
   useEffect(() => {
     if (auth.profile) {
       setView(auth.profile.role === 'admin' ? 'dashboard' : 'my_content')
+      // Fetch unread notification count
+      const fetchUnread = async () => {
+        const { count } = await supabase.from('notifications').select('*', { count: 'exact', head: true })
+          .eq('recipient_id', auth.profile.id).eq('read', false)
+        setUnreadCount(count || 0)
+      }
+      fetchUnread()
+      // Poll every 30 seconds
+      const interval = setInterval(fetchUnread, 30000)
+      return () => clearInterval(interval)
     }
   }, [auth.profile])
 
@@ -2109,6 +2241,7 @@ export default function App() {
         case 'content':   return <AdminContent profile={auth.profile} />
         case 'clients':   return <AdminClients profile={auth.profile} />
         case 'reports':   return <AdminReports profile={auth.profile} />
+        case 'notifications': return <NotificationsPage profile={auth.profile} />
         default:          return <AdminDashboard profile={auth.profile} />
       }
     } else {
@@ -2116,6 +2249,7 @@ export default function App() {
         case 'my_content':  return <ClientContent profile={auth.profile} />
         case 'calendar':    return <ClientCalendar profile={auth.profile} />
         case 'my_reports':  return <ClientReports profile={auth.profile} />
+        case 'notifications': return <NotificationsPage profile={auth.profile} />
         default:            return <ClientContent profile={auth.profile} />
       }
     }
@@ -2125,7 +2259,7 @@ export default function App() {
     <>
       <style>{globalStyles}</style>
       <div style={{ display: 'flex', minHeight: '100vh' }}>
-        <Sidebar profile={auth.profile} view={view} setView={setView} onLogout={auth.signOut} />
+        <Sidebar profile={auth.profile} view={view} setView={setView} onLogout={auth.signOut} unreadCount={unreadCount} />
         <main style={{ flex: 1, padding: 32, overflow: 'auto', maxHeight: '100vh' }}>
           {renderView()}
         </main>
