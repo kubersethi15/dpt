@@ -55,7 +55,7 @@
 | Client management (add/invite) | ✅ | Temp password flow |
 | Client voice & content config (4 tabs) | ✅ | Voice, content rules, research, calendar |
 | Admin can edit post content | 📋 | Currently must create new post |
-| Activity feed / recent changes | 📋 | What happened across all clients today |
+| Activity feed / recent changes | ✅ | Dashboard shows recent comments, approvals, rejections across all clients |
 | Team management (multiple admin users) | 💡 | Currently single admin role |
 | Client health overview | 💡 | Posts pending > X days, clients not reviewed |
 
@@ -117,8 +117,8 @@
 |---|---|---|
 | Client voice config (tone, banned words, examples) | ✅ | |
 | Research keywords and sources per client | ✅ | |
-| AI content QA pass | 📋 | Run generated posts through a QA prompt checking for banned words, AI-sounding language, voice match |
-| Post scoring / quality indicator | 📋 | Rate each post on hook strength, voice match, length |
+| AI content QA pass | ✅ | Instant client-side QA checks banned words, AI phrases, emoji policy, length, engagement bait, exclamation marks |
+| Post scoring / quality indicator | ✅ | Clean/issues badge per post with colored left border |
 | A/B post variants | 💡 | Generate 2 versions of same topic, let client pick |
 | Content calendar recommendations | 💡 | AI suggests what to post next week based on gaps |
 | Competitor content monitoring | 💡 | Track what competitors are posting |

@@ -451,9 +451,81 @@ function AdminDashboard({ profile }) {
           {clients.length === 0 && <div style={{ color: C.g400, fontSize: 14, textAlign: 'center', padding: 20 }}>No clients yet</div>}
         </Card>
       </div>
+
+      {/* Activity Feed */}
+      <ActivityFeed />
     </div>
   )
 }
+
+function ActivityFeed() {
+  const [activities, setActivities] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const fetchActivity = async () => {
+      // Fetch recent comments
+      const { data: comments } = await supabase.from('post_comments').select('*, posts(content, client_id, profiles!posts_client_id_fkey(full_name))').order('created_at', { ascending: false }).limit(10)
+      // Fetch recent notifications (as proxy for status changes)
+      const { data: notifs } = await supabase.from('notifications').select('*, posts(content, profiles!posts_client_id_fkey(full_name))').order('created_at', { ascending: false }).limit(10)
+
+      const items = []
+      ;(comments || []).forEach(c => items.push({
+        id: 'c-' + c.id, type: 'comment', time: c.created_at,
+        actor: c.author_name, isClient: c.is_client,
+        text: c.content, clientName: c.posts?.profiles?.full_name,
+        postPreview: c.posts?.content?.slice(0, 60)
+      }))
+      ;(notifs || []).forEach(n => items.push({
+        id: 'n-' + n.id, type: n.type, time: n.created_at,
+        clientName: n.posts?.profiles?.full_name,
+        postPreview: n.posts?.content?.slice(0, 60)
+      }))
+
+      items.sort((a, b) => new Date(b.time) - new Date(a.time))
+      setActivities(items.slice(0, 15))
+      setLoading(false)
+    }
+    fetchActivity()
+  }, [])
+
+  const typeIcon = { comment: '💬', content_ready_for_review: '📤', content_approved: '✅', content_changes_requested: '↩️', graphic_ready_for_review: '🖼', graphic_approved: '✅', graphic_changes_requested: '↩️' }
+  const typeLabel = { comment: 'commented', content_ready_for_review: 'Content sent for review', content_approved: 'Content approved', content_changes_requested: 'Changes requested', graphic_ready_for_review: 'Graphic sent for review', graphic_approved: 'Graphic approved', graphic_changes_requested: 'Graphic changes requested' }
+
+  const timeAgo = (t) => {
+    const mins = Math.floor((Date.now() - new Date(t)) / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins}m ago`
+    const hrs = Math.floor(mins / 60)
+    if (hrs < 24) return `${hrs}h ago`
+    return `${Math.floor(hrs / 24)}d ago`
+  }
+
+  return (
+    <Card style={{ marginTop: 20 }}>
+      <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Recent Activity</h3>
+      {loading ? <Loader /> : activities.length === 0 ? <div style={{ color: C.g400, fontSize: 13, textAlign: 'center', padding: 16 }}>No recent activity</div> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+          {activities.map((a, i) => (
+            <div key={a.id} style={{ display: 'flex', gap: 12, padding: '10px 0', borderBottom: i < activities.length - 1 ? `1px solid ${C.g100}` : 'none' }}>
+              <span style={{ fontSize: 16, flexShrink: 0, marginTop: 2 }}>{typeIcon[a.type] || '•'}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, color: C.g700 }}>
+                  {a.type === 'comment' ? (
+                    <><span style={{ fontWeight: 600, color: a.isClient ? C.blue : C.navy }}>{a.actor}</span> commented{a.clientName ? ` on ${a.clientName}'s post` : ''}</>
+                  ) : (
+                    <>{typeLabel[a.type] || a.type}{a.clientName ? ` — ${a.clientName}` : ''}</>
+                  )}
+                </div>
+                {a.type === 'comment' && a.text && <div style={{ fontSize: 12, color: C.g500, marginTop: 2, fontStyle: 'italic' }}>"{a.text.slice(0, 80)}{a.text.length > 80 ? '...' : ''}"</div>}
+                {a.postPreview && a.type !== 'comment' && <div style={{ fontSize: 12, color: C.g400, marginTop: 2 }}>{a.postPreview}...</div>}
+              </div>
+              <span style={{ fontSize: 11, color: C.g400, flexShrink: 0, marginTop: 2 }}>{timeAgo(a.time)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
 
 /* ═══════════════════════════════════════════════════════════════
    POST DETAIL PANEL (shared between admin & client)
@@ -1939,6 +2011,62 @@ Create ${numDays} posts distributed across topics. Vary hook types.${config?.day
   const removePost = (idx) => setGeneratedPosts(prev => prev.filter((_, i) => i !== idx))
   const resetWizard = () => { setStep('select_client'); setTopics([]); setSelectedTopics([]); setGeneratedPosts([]); setError(''); setCustomContext('') }
 
+  // ── QA Check (runs client-side, instant) ──
+  const DEFAULT_BANNED = ['transformative','unlock','empower','leverage','elevate','game-changer','navigate','foster','delve','crucial','landscape','groundbreaking','cutting-edge','synergy','paradigm','holistic']
+  const AI_TELLS = ['in today\'s','it\'s worth noting','it\'s important to','let\'s dive','at the end of the day','in conclusion','here\'s the thing','the reality is','let me be clear','without further ado','in this post']
+  const ENGAGEMENT_BAIT = ['repost if','save this','comment below','follow me','p.s. follow','p.p.s','like if you agree','share if','tag someone']
+
+  const qaCheck = (content) => {
+    const issues = []
+    const lower = content.toLowerCase()
+    const wordCount = content.split(/\s+/).filter(w => w.length > 0).length
+    const bannedList = config?.banned_words ? config.banned_words.split(',').map(w => w.trim().toLowerCase()).filter(Boolean) : DEFAULT_BANNED
+
+    // Banned words
+    const foundBanned = bannedList.filter(w => lower.includes(w))
+    if (foundBanned.length) issues.push({ type: 'error', msg: `Banned words: ${foundBanned.join(', ')}` })
+
+    // AI-sounding phrases
+    const foundAI = AI_TELLS.filter(p => lower.includes(p))
+    if (foundAI.length) issues.push({ type: 'warning', msg: `AI-sounding phrases: "${foundAI.join('", "')}"` })
+
+    // Engagement bait
+    const foundBait = ENGAGEMENT_BAIT.filter(p => lower.includes(p))
+    if (foundBait.length) issues.push({ type: 'error', msg: `Engagement bait detected: "${foundBait.join('", "')}"` })
+
+    // Emoji check
+    const emojiRegex = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u
+    const emojiPolicy = config?.emoji_policy || 'never'
+    if (emojiPolicy === 'never' && emojiRegex.test(content)) issues.push({ type: 'error', msg: 'Contains emojis (client policy: never)' })
+
+    // Length
+    const minLen = config?.post_length_min || 100
+    const maxLen = config?.post_length_max || 200
+    if (wordCount < minLen * 0.7) issues.push({ type: 'warning', msg: `Too short: ${wordCount} words (target: ${minLen}-${maxLen})` })
+    if (wordCount > maxLen * 1.3) issues.push({ type: 'warning', msg: `Too long: ${wordCount} words (target: ${minLen}-${maxLen})` })
+
+    // Exclamation marks (often AI-generated)
+    const exclamations = (content.match(/!/g) || []).length
+    if (exclamations > 2) issues.push({ type: 'warning', msg: `${exclamations} exclamation marks (may sound AI-generated)` })
+
+    return issues
+  }
+
+  const QAFlags = ({ content }) => {
+    const issues = qaCheck(content)
+    if (issues.length === 0) return <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: C.green }}><span>✓</span> Passed QA checks</div>
+    return (
+      <div style={{ marginTop: 8 }}>
+        {issues.map((iss, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '4px 0', fontSize: 12, color: iss.type === 'error' ? C.red : C.yellow }}>
+            <span style={{ flexShrink: 0 }}>{iss.type === 'error' ? '✕' : '⚠'}</span>
+            <span>{iss.msg}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   const stepDefs = [
     { id: 'select_client', label: '1. Client' }, { id: 'researching', label: '2. Research' },
     { id: 'pick_topics', label: '3. Topics' }, { id: 'generating', label: '4. Generate' },
@@ -2066,19 +2194,40 @@ Create ${numDays} posts distributed across topics. Vary hook types.${config?.day
       {/* STEP 5: Review Posts */}
       {step === 'review_posts' && (
         <div>
-          <Card style={{ marginBottom: 16, background: C.greenLight, border: `1px solid ${C.green}33` }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: C.navy }}>{generatedPosts.length} posts generated for {client?.full_name}</div>
-            <div style={{ fontSize: 13, color: C.g600, marginTop: 4 }}>Review and edit below. Then save as drafts or push to client for review.</div>
-          </Card>
+          {/* QA Summary Banner */}
+          {(() => {
+            const totalIssues = generatedPosts.reduce((s, p) => s + qaCheck(p.content).filter(i => i.type === 'error').length, 0)
+            const totalWarnings = generatedPosts.reduce((s, p) => s + qaCheck(p.content).filter(i => i.type === 'warning').length, 0)
+            const allClear = totalIssues === 0 && totalWarnings === 0
+            return (
+              <Card style={{ marginBottom: 16, background: allClear ? C.greenLight : totalIssues > 0 ? C.redLight : C.yellowLight, border: `1px solid ${allClear ? C.green : totalIssues > 0 ? C.red : C.yellow}33` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.navy }}>{generatedPosts.length} posts generated for {client?.full_name}</div>
+                    <div style={{ fontSize: 13, color: C.g600, marginTop: 4 }}>
+                      {allClear ? '✓ All posts passed QA checks — ready to review and push' :
+                       `QA found ${totalIssues > 0 ? `${totalIssues} error${totalIssues !== 1 ? 's' : ''}` : ''}${totalIssues > 0 && totalWarnings > 0 ? ' and ' : ''}${totalWarnings > 0 ? `${totalWarnings} warning${totalWarnings !== 1 ? 's' : ''}` : ''} — review flagged items below`}
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            )
+          })()}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
-            {generatedPosts.map((p, i) => (
-              <Card key={i} style={{ padding: 20 }}>
+            {generatedPosts.map((p, i) => {
+              const issues = qaCheck(p.content)
+              const hasErrors = issues.some(iss => iss.type === 'error')
+              return (
+              <Card key={i} style={{ padding: 20, borderLeft: `4px solid ${issues.length === 0 ? C.green : hasErrors ? C.red : C.yellow}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Post {i + 1}</span>
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.g100, color: C.g600 }}>{p.hook_type}</span>
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.blueLight, color: C.blue }}>{p.content_type || 'Text'}</span>
                     {p.day_suggestion && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.orangeLight, color: C.orange }}>{p.day_suggestion}</span>}
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: issues.length === 0 ? C.greenLight : hasErrors ? C.redLight : C.yellowLight, color: issues.length === 0 ? C.green : hasErrors ? C.red : C.yellow, fontWeight: 600 }}>
+                      {issues.length === 0 ? '✓ Clean' : `${issues.length} issue${issues.length !== 1 ? 's' : ''}`}
+                    </span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {editingIdx === i ? <Btn v="success" sz="sm" onClick={saveEdit}>Save</Btn> : <Btn v="secondary" sz="sm" onClick={() => startEdit(i)}>Edit</Btn>}
@@ -2093,9 +2242,10 @@ Create ${numDays} posts distributed across topics. Vary hook types.${config?.day
                     {p.content}
                   </div>
                 )}
+                <QAFlags content={p.content} />
                 {p.topic && <div style={{ fontSize: 12, color: C.g400, marginTop: 8 }}>Topic: {p.topic}</div>}
               </Card>
-            ))}
+            )})}
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <Btn v="secondary" onClick={() => setStep('pick_topics')}>← Back to Topics</Btn>
