@@ -1401,15 +1401,75 @@ function AdminReports({ profile }) {
   const generateReport = async () => {
     if (!selClient || !reportFrom || !reportTo) return
     setLoadingReport(true)
+    setAiRecs(null)
     const { data: wkData } = await supabase.from('report_data').select('*').eq('client_id', selClient)
       .gte('week_start', reportFrom).lte('week_start', reportTo).order('week_start', { ascending: true })
     setReportWeekly(wkData || [])
     const { data: pData, error: pErr } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id', selClient)
       .not('posted_date', 'is', null).gte('posted_date', reportFrom).lte('posted_date', reportTo).order('posted_date', { ascending: true })
     if (pErr) console.error('Report posts error:', pErr)
-    console.log('Report posts:', pData?.length, 'found. With metrics:', pData?.filter(p => p.post_metrics?.length > 0).length)
     setReportPosts(pData || [])
     setLoadingReport(false); setShowReport(true)
+
+    // Generate AI recommendations in background
+    if ((wkData?.length || 0) > 0 || (pData?.length || 0) > 0) {
+      generateAIRecs(wkData || [], pData || [])
+    }
+  }
+
+  const [aiRecs, setAiRecs] = useState(null)
+  const [loadingRecs, setLoadingRecs] = useState(false)
+
+  const generateAIRecs = async (weekly, posts) => {
+    setLoadingRecs(true)
+    const postsWithM = posts.filter(p => p.post_metrics?.length > 0).map(p => ({ content: p.content.slice(0, 100), type: p.content_type, m: p.post_metrics[0] }))
+    const totalImps = weekly.reduce((s, d) => s + (d.impressions || 0), 0)
+    const totalEng = weekly.reduce((s, d) => s + (d.likes || 0) + (d.comments || 0) + (d.shares || 0), 0)
+    const engRate = totalImps ? ((totalEng / totalImps) * 100).toFixed(1) : '0'
+
+    try {
+      const raw = await callClaude(
+        `You are a senior LinkedIn strategist analyzing a client's content performance data. Provide specific, actionable, data-backed recommendations. Be direct — no fluff.
+
+OUTPUT: Return EXACTLY a JSON object:
+{
+  "whats_working": ["specific thing 1 with data reference", "specific thing 2"],
+  "stop_doing": ["specific thing to stop with reason"],
+  "content_mix_adjustments": "1-2 sentences on how to adjust the content mix",
+  "next_period_themes": ["theme 1 with rationale", "theme 2", "theme 3"],
+  "next_period_calendar": [
+    {"day": "Monday", "type": "Text", "theme": "...", "hook_suggestion": "..."},
+    {"day": "Tuesday", "type": "Carousel", "theme": "...", "hook_suggestion": "..."},
+    {"day": "Wednesday", "type": "Text", "theme": "...", "hook_suggestion": "..."},
+    {"day": "Thursday", "type": "Text", "theme": "...", "hook_suggestion": "..."},
+    {"day": "Friday", "type": "Text", "theme": "...", "hook_suggestion": "..."}
+  ],
+  "growth_prediction": "1 sentence on expected trajectory if recommendations are followed",
+  "key_insight": "The single most important insight from this data"
+}
+No markdown. Just JSON.`,
+        `Analyze this LinkedIn performance data for ${client?.full_name} (${client?.niche || 'General'}):
+
+WEEKLY DATA (${weekly.length} weeks):
+Total impressions: ${totalImps.toLocaleString()}
+Total engagements: ${totalEng.toLocaleString()}
+Avg engagement rate: ${engRate}%
+Follower trend: ${weekly.length > 1 ? `${weekly[0].followers || 0} → ${weekly[weekly.length-1].followers || 0}` : 'N/A'}
+Weekly breakdown: ${weekly.map(w => `${w.week_label}: ${w.impressions} impr, ${(w.likes||0)+(w.comments||0)+(w.shares||0)} eng`).join(' | ')}
+
+POSTS WITH METRICS (${postsWithM.length} posts):
+${postsWithM.map((p, i) => `Post ${i+1} (${p.type}): ${p.m.impressions} impr, ${p.m.likes} likes, ${p.m.comments} comments, ${p.m.shares} shares — "${p.content}..."`).join('\n')}
+
+Content types used: ${[...new Set(posts.map(p => p.content_type))].join(', ')}
+
+Provide specific, actionable recommendations and a suggested content calendar for next week. Return ONLY JSON.`,
+        false
+      )
+      const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
+      const match = cleaned.match(/\{[\s\S]*\}/)
+      if (match) setAiRecs(JSON.parse(match[0]))
+    } catch (e) { console.error('AI recs failed:', e) }
+    setLoadingRecs(false)
   }
 
   const [downloadingPdf, setDownloadingPdf] = useState(false)
@@ -1784,6 +1844,98 @@ function AdminReports({ profile }) {
               </div>
             )
           })()}
+
+          {/* AI STRATEGIC RECOMMENDATIONS */}
+          {loadingRecs && (
+            <div style={{ marginBottom: 28, padding: 24, background: C.g50, borderRadius: 12, textAlign: 'center' }}>
+              <Loader />
+              <div style={{ fontSize: 13, color: C.g500, marginTop: 8 }}>Generating AI recommendations...</div>
+            </div>
+          )}
+
+          {aiRecs && (
+            <>
+              <div style={{ marginBottom: 28 }}>
+                <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid #8B5CF6` }}>Strategic Recommendations</h3>
+
+                {/* Key Insight */}
+                {aiRecs.key_insight && (
+                  <div style={{ padding: 16, background: `linear-gradient(135deg, ${C.navy}, #1a2744)`, borderRadius: 10, marginBottom: 16, color: C.white }}>
+                    <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 2, color: C.g400, marginBottom: 6 }}>Key Insight</div>
+                    <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.5 }}>{aiRecs.key_insight}</div>
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
+                  {/* What's Working */}
+                  <Card style={{ background: C.greenLight, border: `1px solid ${C.green}33` }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 700, color: C.green, marginBottom: 10 }}>What's Working</h4>
+                    {(aiRecs.whats_working || []).map((s, i) => (
+                      <div key={i} style={{ fontSize: 13, color: C.g700, marginBottom: 8, display: 'flex', gap: 8, lineHeight: 1.5 }}>
+                        <span style={{ color: C.green, flexShrink: 0 }}>✓</span> {s}
+                      </div>
+                    ))}
+                  </Card>
+
+                  {/* Stop Doing */}
+                  <Card style={{ background: C.redLight, border: `1px solid ${C.red}33` }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 700, color: C.red, marginBottom: 10 }}>Consider Stopping</h4>
+                    {(aiRecs.stop_doing || []).map((s, i) => (
+                      <div key={i} style={{ fontSize: 13, color: C.g700, marginBottom: 8, display: 'flex', gap: 8, lineHeight: 1.5 }}>
+                        <span style={{ color: C.red, flexShrink: 0 }}>✕</span> {s}
+                      </div>
+                    ))}
+                  </Card>
+                </div>
+
+                {/* Content Mix */}
+                {aiRecs.content_mix_adjustments && (
+                  <Card style={{ marginBottom: 16 }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, marginBottom: 8 }}>Content Mix Adjustment</h4>
+                    <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.6 }}>{aiRecs.content_mix_adjustments}</div>
+                  </Card>
+                )}
+
+                {/* Growth Prediction */}
+                {aiRecs.growth_prediction && (
+                  <div style={{ padding: 12, background: C.blueLight, borderRadius: 8, marginBottom: 16, display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <span style={{ fontSize: 20 }}>📈</span>
+                    <div style={{ fontSize: 13, color: C.navy, fontWeight: 500 }}>{aiRecs.growth_prediction}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* NEXT PERIOD CONTENT CALENDAR */}
+              {aiRecs.next_period_calendar && (
+                <div style={{ marginBottom: 28 }}>
+                  <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 6, paddingBottom: 8, borderBottom: `3px solid ${C.orange}` }}>Recommended Content Calendar — Next Week</h3>
+                  {aiRecs.next_period_themes && (
+                    <div style={{ fontSize: 13, color: C.g500, marginBottom: 14 }}>
+                      Themes: {aiRecs.next_period_themes.join(' · ')}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {aiRecs.next_period_calendar.map((day, i) => {
+                      const dayColors = { Monday: C.red, Tuesday: C.orange, Wednesday: C.blue, Thursday: '#8B5CF6', Friday: C.green }
+                      const color = dayColors[day.day] || C.g500
+                      return (
+                        <div key={i} style={{ display: 'flex', gap: 14, padding: 14, borderRadius: 10, background: C.white, border: `1px solid ${C.g200}` }}>
+                          <div style={{ width: 80, flexShrink: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color }}>{day.day}</div>
+                            <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.g100, color: C.g600 }}>{day.type}</span>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: C.navy, marginBottom: 2 }}>{day.theme}</div>
+                            <div style={{ fontSize: 12, color: C.g500, fontStyle: 'italic' }}>Hook: "{day.hook_suggestion}"</div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
 
           <div style={{ marginTop:28, padding:16, background:C.g50, borderRadius:8, textAlign:'center', fontSize:12, color:C.g400, borderTop:`2px solid ${C.g200}` }}>
             Confidential — Prepared by DPT Agency — {new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'})}

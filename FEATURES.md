@@ -75,7 +75,7 @@
 | Report: follower growth chart | ✅ | Bar chart with start/end/net growth summary |
 | Report: engagement rate trend over time | ✅ | Color-coded bars with avg, peak, and LinkedIn benchmark |
 | Report: top vs bottom performing posts comparison | ✅ | Side-by-side best vs lowest with full metrics |
-| Report: content recommendations / next steps | 💡 | AI-generated based on what performed well |
+| Report: content recommendations / next steps | ✅ | AI analyzes performance data, generates whats working/stop doing/content mix/growth prediction |
 | Automated report scheduling | 💡 | Auto-generate and email monthly |
 | LinkedIn profile audit report | ✅ | Full audit tool: intake form, AI analysis with 8 scored categories, strengths/improvements/quick wins, branded report |
 | CSV/Excel data import for metrics | ✅ | Upload CSV, preview data, auto-map columns, import to weekly metrics |
@@ -120,7 +120,7 @@
 | AI content QA pass | ✅ | Instant client-side QA checks banned words, AI phrases, emoji policy, length, engagement bait, exclamation marks |
 | Post scoring / quality indicator | ✅ | Clean/issues badge per post with colored left border |
 | A/B post variants | ✅ | Generate alternative version with different hook/angle, inline comparison |
-| Content calendar recommendations | 💡 | AI suggests what to post next week based on gaps |
+| Content calendar recommendations | ✅ | AI suggests next weeks content calendar with day-by-day themes and hook suggestions |
 | Competitor content monitoring | 💡 | Track what competitors are posting |
 | Hashtag performance tracking | 💡 | Which hashtags drive reach |
 | Best time to post analysis | 💡 | Based on historical metrics |
