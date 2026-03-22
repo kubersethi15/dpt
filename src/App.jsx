@@ -335,7 +335,7 @@ function Sidebar({ profile, view, setView, onLogout, unreadCount = 0 }) {
   const isAdmin = profile?.role === 'admin'
   const items = isAdmin
     ? [{ id: 'dashboard', label: 'Dashboard', icon: '◉' }, { id: 'create', label: 'Create Content', icon: '⚡' }, { id: 'content', label: 'Content', icon: '✎' }, { id: 'clients', label: 'Clients', icon: '◎' }, { id: 'reports', label: 'Reports', icon: '▤' }, { id: 'notifications', label: 'Notifications', icon: '🔔', badge: unreadCount }]
-    : [{ id: 'my_content', label: 'My Content', icon: '✎' }, { id: 'my_reports', label: 'My Reports', icon: '▤' }, { id: 'notifications', label: 'Notifications', icon: '🔔', badge: unreadCount }]
+    : [{ id: 'my_dashboard', label: 'Dashboard', icon: '◉' }, { id: 'my_content', label: 'My Content', icon: '✎' }, { id: 'my_reports', label: 'My Reports', icon: '▤' }, { id: 'notifications', label: 'Notifications', icon: '🔔', badge: unreadCount }]
 
   return (
     <div style={{ width: 220, minHeight: '100vh', background: C.navy, padding: '20px 0', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
@@ -805,12 +805,36 @@ function AdminContent({ profile }) {
   const { posts, loading, refresh } = usePosts(filterClient !== 'all' ? filterClient : null)
   const [selectedPost, setSelectedPost] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
-  const [viewMode, setViewMode] = useState('list') // 'list' or 'calendar'
+  const [viewMode, setViewMode] = useState('list')
 
   // Quick action states
   const [datePickerPostId, setDatePickerPostId] = useState(null)
-  const [datePickerAction, setDatePickerAction] = useState(null) // 'schedule' or 'post'
+  const [datePickerAction, setDatePickerAction] = useState(null)
   const [pickedDate, setPickedDate] = useState('')
+
+  // Bulk selection
+  const [bulkMode, setBulkMode] = useState(false)
+  const [bulkSelected, setBulkSelected] = useState(new Set())
+  const [bulkActioning, setBulkActioning] = useState(false)
+
+  const toggleBulkSelect = (id) => setBulkSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const selectAll = () => setBulkSelected(new Set(filtered.map(p => p.id)))
+  const deselectAll = () => setBulkSelected(new Set())
+
+  const bulkUpdateStatus = async (newStatus) => {
+    setBulkActioning(true)
+    for (const id of bulkSelected) {
+      await supabase.from('posts').update({ status: newStatus }).eq('id', id)
+    }
+    setBulkActioning(false); setBulkSelected(new Set()); refresh()
+  }
+
+  const bulkDelete = async () => {
+    if (!confirm(`Delete ${bulkSelected.size} posts?`)) return
+    setBulkActioning(true)
+    for (const id of bulkSelected) { await supabase.from('posts').delete().eq('id', id) }
+    setBulkActioning(false); setBulkSelected(new Set()); refresh()
+  }
 
   // Create form
   const [newClientId, setNewClientId] = useState('')
@@ -912,8 +936,23 @@ function AdminContent({ profile }) {
         action={<div style={{ display: 'flex', gap: 8 }}>
           <Btn v={viewMode === 'list' ? 'primary' : 'secondary'} sz="sm" onClick={() => setViewMode('list')}>List</Btn>
           <Btn v={viewMode === 'calendar' ? 'primary' : 'secondary'} sz="sm" onClick={() => setViewMode('calendar')}>Calendar</Btn>
+          <Btn v={bulkMode ? 'orange' : 'secondary'} sz="sm" onClick={() => { setBulkMode(!bulkMode); setBulkSelected(new Set()) }}>{bulkMode ? 'Exit Bulk' : 'Bulk'}</Btn>
           <Btn onClick={() => setShowCreate(true)}>+ New Post</Btn>
         </div>} />
+
+      {/* Bulk Action Bar */}
+      {bulkMode && bulkSelected.size > 0 && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '12px 16px', background: C.blueLight, borderRadius: 10, border: `1px solid ${C.blue}33`, marginBottom: 16 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: C.navy, marginRight: 8 }}>{bulkSelected.size} selected</span>
+          <Btn v="secondary" sz="sm" onClick={selectAll}>Select All</Btn>
+          <Btn v="secondary" sz="sm" onClick={deselectAll}>Deselect</Btn>
+          <span style={{ width: 1, height: 20, background: C.g300 }} />
+          <Btn v="orange" sz="sm" onClick={() => bulkUpdateStatus('pending_review')} disabled={bulkActioning}>Send for Review</Btn>
+          <Btn v="success" sz="sm" onClick={() => bulkUpdateStatus('approved')} disabled={bulkActioning}>Approve</Btn>
+          <Btn v="primary" sz="sm" onClick={() => bulkUpdateStatus('scheduled')} disabled={bulkActioning}>Schedule</Btn>
+          <Btn v="danger" sz="sm" onClick={bulkDelete} disabled={bulkActioning}>Delete</Btn>
+        </div>
+      )}
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
@@ -932,8 +971,13 @@ function AdminContent({ profile }) {
       {loading ? <Loader /> : filtered.length === 0 ? <EmptyState icon="✎" title="No posts yet" sub="Create your first post to get started" /> : viewMode === 'list' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {filtered.map(p => (
-            <Card key={p.id} onClick={() => setSelectedPost(p)} style={{ padding: 16, cursor: 'pointer', transition: 'all 0.15s', border: `1px solid ${selectedPost?.id === p.id ? C.blue : C.g200}` }}>
+            <Card key={p.id} onClick={() => bulkMode ? toggleBulkSelect(p.id) : setSelectedPost(p)} style={{ padding: 16, cursor: 'pointer', transition: 'all 0.15s', border: `1px solid ${bulkSelected.has(p.id) ? C.blue : selectedPost?.id === p.id ? C.blue : C.g200}`, background: bulkSelected.has(p.id) ? C.blueLight : C.white }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+                {bulkMode && (
+                  <div onClick={e => { e.stopPropagation(); toggleBulkSelect(p.id) }} style={{ width: 22, height: 22, borderRadius: 4, border: `2px solid ${bulkSelected.has(p.id) ? C.blue : C.g300}`, background: bulkSelected.has(p.id) ? C.blue : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.white, fontSize: 13, fontWeight: 700, flexShrink: 0, marginTop: 6, cursor: 'pointer' }}>
+                    {bulkSelected.has(p.id) && '✓'}
+                  </div>
+                )}
                 <Avatar initials={p.profiles?.avatar_initials || p.profiles?.full_name?.split(' ').map(w => w[0]).join('') || '?'} size={36} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -1770,6 +1814,165 @@ function ClientCalendar({ profile }) {
    CLIENT: MY REPORTS
    ═══════════════════════════════════════════════════════════════ */
 
+function ClientDashboard({ profile }) {
+  const { posts, loading: postsLoading } = usePosts(profile.id)
+  const { data: reportData, loading: reportLoading } = useReportData(profile.id)
+  const [topPosts, setTopPosts] = useState([])
+  const [loadingTop, setLoadingTop] = useState(true)
+
+  useEffect(() => {
+    const fetchTop = async () => {
+      const { data } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id', profile.id)
+        .not('posted_date', 'is', null).order('posted_date', { ascending: false }).limit(20)
+      const withMetrics = (data || []).filter(p => p.post_metrics?.length > 0)
+        .map(p => ({ ...p, m: p.post_metrics[0] }))
+        .sort((a, b) => (b.m.impressions || 0) - (a.m.impressions || 0))
+      setTopPosts(withMetrics.slice(0, 5))
+      setLoadingTop(false)
+    }
+    fetchTop()
+  }, [profile.id])
+
+  if (postsLoading || reportLoading) return <Loader />
+
+  const totalImps = reportData.reduce((s, d) => s + (d.impressions || 0), 0)
+  const totalEng = reportData.reduce((s, d) => s + (d.likes || 0) + (d.comments || 0) + (d.shares || 0), 0)
+  const avgEngRate = totalImps ? ((totalEng / totalImps) * 100).toFixed(1) : '0'
+  const latestFollowers = reportData.length ? reportData[reportData.length - 1].followers : 0
+  const firstFollowers = reportData.length ? reportData[0].followers : 0
+  const followerGrowth = firstFollowers ? (((latestFollowers - firstFollowers) / firstFollowers) * 100).toFixed(0) : 0
+
+  const pendingReview = posts.filter(p => p.status === 'pending_review').length
+  const upcoming = posts.filter(p => p.scheduled_date && new Date(p.scheduled_date) >= new Date()).length
+  const totalPosted = posts.filter(p => p.status === 'posted').length
+
+  // Engagement rate trend
+  const engTrend = reportData.map(d => {
+    const eng = (d.likes || 0) + (d.comments || 0) + (d.shares || 0)
+    return { week: d.week_label, rate: d.impressions ? ((eng / d.impressions) * 100).toFixed(1) : 0, impressions: d.impressions || 0 }
+  })
+
+  return (
+    <div className="fade-in">
+      <PageHeader title={`Welcome, ${profile.full_name?.split(' ')[0]}`} subtitle={`${profile.company || ''} — LinkedIn Performance Overview`} />
+
+      {/* Action banner */}
+      {pendingReview > 0 && (
+        <div style={{ padding: '14px 20px', background: C.yellowLight, borderRadius: 10, border: `1px solid ${C.yellow}33`, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 20 }}>⏳</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.g800 }}>{pendingReview} post{pendingReview > 1 ? 's' : ''} awaiting your review</div>
+            <div style={{ fontSize: 13, color: C.g500 }}>Head to My Content to approve or request changes</div>
+          </div>
+        </div>
+      )}
+
+      {/* KPIs */}
+      <div style={{ display: 'flex', gap: 14, marginBottom: 24, flexWrap: 'wrap' }}>
+        <KPI icon="👥" label="Followers" value={latestFollowers.toLocaleString()} change={parseInt(followerGrowth) || null} />
+        <KPI icon="👁" label="Total Impressions" value={totalImps.toLocaleString()} />
+        <KPI icon="💬" label="Engagements" value={totalEng.toLocaleString()} />
+        <KPI icon="📊" label="Eng Rate" value={`${avgEngRate}%`} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+        {/* Content Status */}
+        <Card>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Content Status</h3>
+          {[
+            { label: 'Awaiting Your Review', count: pendingReview, color: C.yellow },
+            { label: 'Upcoming / Scheduled', count: upcoming, color: C.blue },
+            { label: 'Posted', count: totalPosted, color: C.green },
+            { label: 'Total Posts', count: posts.length, color: C.navy },
+          ].map((item, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < 3 ? `1px solid ${C.g100}` : 'none' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: item.color }} />
+                <span style={{ fontSize: 13, color: C.g600 }}>{item.label}</span>
+              </div>
+              <span style={{ fontSize: 16, fontWeight: 700, color: C.navy }}>{item.count}</span>
+            </div>
+          ))}
+        </Card>
+
+        {/* Engagement Trend */}
+        <Card>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Engagement Rate Trend</h3>
+          {engTrend.length === 0 ? <div style={{ color: C.g400, fontSize: 13, textAlign: 'center', padding: 20 }}>No data yet</div> : (
+            <div>
+              {engTrend.map((d, i) => {
+                const maxRate = Math.max(...engTrend.map(r => parseFloat(r.rate) || 0))
+                const pct = maxRate ? ((parseFloat(d.rate) || 0) / maxRate) * 100 : 0
+                return (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <div style={{ width: 80, fontSize: 11, color: C.g500, flexShrink: 0 }}>{d.week}</div>
+                    <div style={{ flex: 1, height: 20, background: C.g100, borderRadius: 4, overflow: 'hidden', position: 'relative' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: parseFloat(d.rate) >= 3 ? C.green : parseFloat(d.rate) >= 2 ? C.blue : C.orange, borderRadius: 4 }} />
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: C.navy, width: 40, textAlign: 'right' }}>{d.rate}%</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* Top Posts */}
+      {!loadingTop && topPosts.length > 0 && (
+        <Card>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Your Top Performing Posts</h3>
+          {topPosts.map((p, i) => {
+            const m = p.m
+            const eng = (m.likes || 0) + (m.comments || 0) + (m.shares || 0)
+            const engR = m.impressions ? ((eng / m.impressions) * 100).toFixed(1) : '0'
+            return (
+              <div key={p.id} style={{ padding: 12, marginBottom: 8, borderRadius: 8, background: i === 0 ? C.greenLight : C.g50, border: `1px solid ${i === 0 ? C.green + '33' : C.g200}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ width: 22, height: 22, borderRadius: '50%', background: i === 0 ? C.green : C.g400, color: C.white, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
+                    <span style={{ fontSize: 12, color: C.g400 }}>{p.posted_date && new Date(p.posted_date + 'T00:00:00').toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })}</span>
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{engR}% eng</span>
+                </div>
+                <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', marginBottom: 6 }}>{p.content}</div>
+                <div style={{ display: 'flex', gap: 14, fontSize: 12, color: C.g500 }}>
+                  <span>{(m.impressions || 0).toLocaleString()} impr</span>
+                  <span>{m.likes || 0} likes</span>
+                  <span>{m.comments || 0} comments</span>
+                  <span>{m.shares || 0} shares</span>
+                </div>
+              </div>
+            )
+          })}
+        </Card>
+      )}
+
+      {/* Follower Growth */}
+      {reportData.length > 1 && (
+        <Card style={{ marginTop: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Follower Growth</h3>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 120 }}>
+            {reportData.map((d, i) => {
+              const max = Math.max(...reportData.map(r => r.followers || 0))
+              const min = Math.min(...reportData.filter(r => r.followers > 0).map(r => r.followers))
+              const range = max - min || 1
+              const h = ((d.followers - min) / range) * 100 + 10
+              return (
+                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 10, color: C.g500, fontWeight: 600 }}>{(d.followers || 0).toLocaleString()}</span>
+                  <div style={{ width: '100%', height: h, background: `linear-gradient(180deg, ${C.blue} 0%, rgba(45,127,249,0.3) 100%)`, borderRadius: '4px 4px 0 0', minHeight: 10 }} />
+                  <span style={{ fontSize: 9, color: C.g400, transform: 'rotate(-45deg)', whiteSpace: 'nowrap' }}>{d.week_label}</span>
+                </div>
+              )
+            })}
+          </div>
+        </Card>
+      )}
+    </div>
+  )
+}
+
 function ClientReports({ profile }) {
   const { data: reportData, loading } = useReportData(profile.id)
 
@@ -2392,7 +2595,7 @@ export default function App() {
 
   useEffect(() => {
     if (auth.profile) {
-      setView(auth.profile.role === 'admin' ? 'dashboard' : 'my_content')
+      setView(auth.profile.role === 'admin' ? 'dashboard' : 'my_dashboard')
       // Fetch unread notification count
       const fetchUnread = async () => {
         const { count } = await supabase.from('notifications').select('*', { count: 'exact', head: true })
@@ -2439,11 +2642,12 @@ export default function App() {
       }
     } else {
       switch (view) {
+        case 'my_dashboard': return <ClientDashboard profile={auth.profile} />
         case 'my_content':  return <ClientContent profile={auth.profile} />
         case 'calendar':    return <ClientCalendar profile={auth.profile} />
         case 'my_reports':  return <ClientReports profile={auth.profile} />
         case 'notifications': return <NotificationsPage profile={auth.profile} />
-        default:            return <ClientContent profile={auth.profile} />
+        default:            return <ClientDashboard profile={auth.profile} />
       }
     }
   }

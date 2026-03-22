@@ -26,7 +26,7 @@
 | Comment thread per post | ✅ | Both admin and client can comment |
 | Post editing by admin | ✅ | Admin can edit post content inline in detail panel |
 | Graphic approval as separate status | ✅ | Separate graphic_status field, client can approve/reject graphic independently |
-| Bulk status changes | 📋 | Select multiple posts, change status at once |
+| Bulk status changes | ✅ | Bulk mode toggle, select multiple posts, bulk send for review/approve/schedule/delete |
 | Bulk scheduling (drag-and-drop calendar) | 💡 | Visual drag to reschedule |
 | Post duplication / templates | 💡 | Clone a high-performing post as template |
 | Multi-platform content adaptation | 💡 | Schema supports Twitter/IG/FB but generation is LinkedIn-only |
@@ -42,7 +42,7 @@
 | Calendar view of scheduled content | ✅ | Monthly grouped view |
 | Password reset / forgot password | ✅ | Forgot password link on login, sends reset email |
 | Email notifications on new content to review | 📋 | Clients don't know when new content arrives |
-| Client dashboard with engagement metrics | 📋 | Currently basic — needs proper KPI dashboard |
+| Client dashboard with engagement metrics | ✅ | Full dashboard: KPIs with growth, content status, engagement rate trend, top performing posts, follower growth chart |
 | Graphic preview and approval | ✅ | Client can approve/reject graphics with feedback |
 | Mobile-responsive client portal | 💡 | Works but not optimised for mobile |
 
@@ -54,7 +54,7 @@
 | Posts per client summary | ✅ | With pending count |
 | Client management (add/invite) | ✅ | Temp password flow |
 | Client voice & content config (4 tabs) | ✅ | Voice, content rules, research, calendar |
-| Admin can edit post content | 📋 | Currently must create new post |
+| Admin can edit post content | ✅ | Edit button in post detail panel, inline textarea |
 | Activity feed / recent changes | ✅ | Dashboard shows recent comments, approvals, rejections across all clients |
 | Team management (multiple admin users) | 💡 | Currently single admin role |
 | Client health overview | 💡 | Posts pending > X days, clients not reviewed |
