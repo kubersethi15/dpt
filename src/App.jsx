@@ -526,6 +526,8 @@ function ActivityFeed() {
         </div>
       )}
     </Card>
+  )
+}
 
 /* ═══════════════════════════════════════════════════════════════
    POST DETAIL PANEL (shared between admin & client)
