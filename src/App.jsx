@@ -3150,114 +3150,236 @@ Provide a thorough, honest audit. Return ONLY JSON.`,
    ═══════════════════════════════════════════════════════════════ */
 
 function CSVImport({ clientId, onImported }) {
-  const [parsing, setParsing] = useState(false)
-  const [preview, setPreview] = useState(null)
+  const [step, setStep] = useState('upload') // 'upload' | 'map' | 'preview' | 'done'
+  const [rawData, setRawData] = useState(null)
+  const [mapping, setMapping] = useState({})
   const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState(null)
+
+  const TARGET_FIELDS = [
+    { key: 'date', label: 'Date / Week Start', required: true },
+    { key: 'impressions', label: 'Impressions' },
+    { key: 'likes', label: 'Likes / Reactions' },
+    { key: 'comments', label: 'Comments' },
+    { key: 'shares', label: 'Shares / Reposts' },
+    { key: 'profile_views', label: 'Profile Views' },
+    { key: 'followers', label: 'Followers' },
+    { key: 'search', label: 'Search Appearances' },
+    { key: 'week_label', label: 'Week Label (optional)' },
+  ]
+
+  // Known LinkedIn column name variants
+  const AUTO_MAP = {
+    date: ['date', 'week', 'week start', 'start date', 'period start', 'start', 'reporting period'],
+    impressions: ['impressions', 'total impressions', 'content impressions', 'post impressions', 'organic impressions'],
+    likes: ['likes', 'reactions', 'total reactions', 'engagements - reactions'],
+    comments: ['comments', 'total comments', 'engagements - comments'],
+    shares: ['shares', 'reposts', 'total shares', 'engagements - shares', 'forwards'],
+    profile_views: ['profile views', 'profile_views', 'unique visitors', 'page views'],
+    followers: ['followers', 'total followers', 'follower count', 'new followers', 'net followers'],
+    search: ['search appearances', 'search_appearances', 'search', 'appearances in search'],
+    week_label: ['week label', 'week_label', 'period', 'week name'],
+  }
 
   const parseCSV = (text) => {
-    const lines = text.trim().split('\n')
+    const lines = text.trim().split('\n').filter(l => l.trim())
     if (lines.length < 2) return null
-    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, '').toLowerCase())
+    // Handle both comma and tab separated
+    const sep = lines[0].includes('\t') ? '\t' : ','
+    const headers = lines[0].split(sep).map(h => h.trim().replace(/^["']|["']$/g, ''))
     const rows = lines.slice(1).map(line => {
-      const vals = line.split(',').map(v => v.trim().replace(/"/g, ''))
+      // Handle quoted fields with commas inside
+      const vals = []
+      let current = '', inQuote = false
+      for (const ch of line) {
+        if (ch === '"') { inQuote = !inQuote }
+        else if ((ch === sep.charAt(0)) && !inQuote) { vals.push(current.trim()); current = '' }
+        else { current += ch }
+      }
+      vals.push(current.trim())
       const row = {}
-      headers.forEach((h, i) => { row[h] = vals[i] || '' })
+      headers.forEach((h, i) => { row[h] = (vals[i] || '').replace(/^["']|["']$/g, '') })
       return row
-    })
+    }).filter(r => Object.values(r).some(v => v))
     return { headers, rows }
+  }
+
+  const autoMapColumns = (headers) => {
+    const m = {}
+    const lowerHeaders = headers.map(h => h.toLowerCase().trim())
+    TARGET_FIELDS.forEach(f => {
+      const candidates = AUTO_MAP[f.key] || []
+      const match = lowerHeaders.findIndex(h => candidates.includes(h))
+      if (match >= 0) m[f.key] = headers[match]
+    })
+    return m
+  }
+
+  const parseDate = (val) => {
+    if (!val) return null
+    // Try various formats
+    const formats = [
+      val, // as-is
+      val.replace(/(\d{2})\/(\d{2})\/(\d{4})/, '$3-$2-$1'), // DD/MM/YYYY -> YYYY-MM-DD
+      val.replace(/(\d{2})\/(\d{2})\/(\d{4})/, '$3-$1-$2'), // MM/DD/YYYY -> YYYY-MM-DD
+      val.replace(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{4})/i, '$2 $1, $3'),
+    ]
+    for (const f of formats) {
+      const d = new Date(f)
+      if (!isNaN(d.getTime()) && d.getFullYear() > 2000) return d.toISOString().split('T')[0]
+    }
+    return null
   }
 
   const handleFile = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setParsing(true)
     const reader = new FileReader()
     reader.onload = (ev) => {
       const data = parseCSV(ev.target.result)
-      setPreview(data)
-      setParsing(false)
+      if (!data || data.rows.length === 0) { alert('Could not parse CSV — check the file format'); return }
+      setRawData(data)
+      setMapping(autoMapColumns(data.headers))
+      setStep('map')
     }
     reader.readAsText(file)
+    e.target.value = '' // reset so same file can be re-uploaded
   }
 
-  const mapAndImport = async () => {
-    if (!preview || !clientId) return
+  const mappedPreview = () => {
+    if (!rawData || !mapping.date) return []
+    return rawData.rows.slice(0, 5).map(row => {
+      const date = parseDate(row[mapping.date])
+      return {
+        date: date || '⚠ Invalid',
+        impressions: mapping.impressions ? row[mapping.impressions] : '-',
+        likes: mapping.likes ? row[mapping.likes] : '-',
+        comments: mapping.comments ? row[mapping.comments] : '-',
+        shares: mapping.shares ? row[mapping.shares] : '-',
+        profile_views: mapping.profile_views ? row[mapping.profile_views] : '-',
+        followers: mapping.followers ? row[mapping.followers] : '-',
+      }
+    })
+  }
+
+  const doImport = async () => {
+    if (!rawData || !clientId || !mapping.date) return
     setImporting(true)
+    let imported = 0, skipped = 0
 
-    for (const row of preview.rows) {
-      // Try to detect LinkedIn's export format
-      const date = row.date || row.week || row['week start'] || row['start date'] || ''
-      if (!date) continue
+    for (const row of rawData.rows) {
+      const weekStart = parseDate(row[mapping.date])
+      if (!weekStart) { skipped++; continue }
 
-      // Parse date
-      let weekStart = ''
-      try {
-        const d = new Date(date)
-        if (!isNaN(d.getTime())) weekStart = d.toISOString().split('T')[0]
-      } catch { continue }
-      if (!weekStart) continue
+      const get = (key) => parseInt(row[mapping[key]] || 0) || 0
 
-      const impressions = parseInt(row.impressions || row['total impressions'] || 0) || 0
-      const likes = parseInt(row.likes || row.reactions || 0) || 0
-      const comments = parseInt(row.comments || 0) || 0
-      const shares = parseInt(row.shares || row.reposts || 0) || 0
-      const profileViews = parseInt(row['profile views'] || row.profile_views || 0) || 0
-      const followers = parseInt(row.followers || row['total followers'] || row['follower count'] || 0) || 0
-      const search = parseInt(row['search appearances'] || row.search_appearances || row.search || 0) || 0
-
-      await supabase.from('report_data').upsert({
+      const { error } = await supabase.from('report_data').upsert({
         client_id: clientId,
-        week_label: row['week'] || row['week label'] || `Week of ${weekStart}`,
         week_start: weekStart,
-        impressions, likes, comments, shares,
-        profile_views: profileViews, followers,
-        search_appearances: search,
+        week_label: mapping.week_label ? row[mapping.week_label] : `Week of ${weekStart}`,
+        impressions: get('impressions'), likes: get('likes'), comments: get('comments'),
+        shares: get('shares'), profile_views: get('profile_views'),
+        followers: get('followers'), search_appearances: get('search'),
       }, { onConflict: 'client_id,week_start' })
+
+      if (error) { console.error('Import row error:', error); skipped++ }
+      else imported++
     }
 
     setImporting(false)
-    setPreview(null)
+    setImportResult({ imported, skipped })
+    setStep('done')
     if (onImported) onImported()
   }
 
+  const reset = () => { setStep('upload'); setRawData(null); setMapping({}); setImportResult(null) }
+
   return (
     <Card style={{ marginBottom: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.navy }}>Import from CSV</div>
-          <div style={{ fontSize: 12, color: C.g500 }}>Upload a LinkedIn analytics export or any CSV with weekly data</div>
-        </div>
-        {!preview && (
-          <label style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 8, background: C.g100, color: C.g700, fontSize: 13, fontWeight: 600 }}>
-            {parsing ? 'Reading...' : 'Upload CSV'}
+      {/* UPLOAD STEP */}
+      {step === 'upload' && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.navy }}>Import from CSV</div>
+            <div style={{ fontSize: 12, color: C.g500 }}>Upload a LinkedIn analytics export. Same data as manual entry, just faster for multiple weeks.</div>
+          </div>
+          <label style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 8, background: C.blue, color: C.white, fontSize: 13, fontWeight: 600 }}>
+            Upload CSV
             <input type="file" accept=".csv,.tsv,.txt" onChange={handleFile} style={{ display: 'none' }} />
           </label>
-        )}
-      </div>
+        </div>
+      )}
 
-      {preview && (
+      {/* COLUMN MAPPING STEP */}
+      {step === 'map' && rawData && (
         <div>
-          <div style={{ fontSize: 12, color: C.g500, marginBottom: 8 }}>{preview.rows.length} rows found. Columns: {preview.headers.join(', ')}</div>
-          <div style={{ overflow: 'auto', maxHeight: 200, borderRadius: 8, border: `1px solid ${C.g200}`, marginBottom: 12 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-              <thead>
-                <tr style={{ background: C.navy, color: C.white }}>
-                  {preview.headers.map(h => <th key={h} style={{ padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {preview.rows.slice(0, 5).map((row, i) => (
-                  <tr key={i} style={{ background: i % 2 ? C.g50 : C.white }}>
-                    {preview.headers.map(h => <td key={h} style={{ padding: '4px 8px' }}>{row[h]}</td>)}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: C.navy }}>Map Columns</div>
+              <div style={{ fontSize: 12, color: C.g500 }}>{rawData.rows.length} rows found. Match your CSV columns to the fields below.</div>
+            </div>
           </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
+            {TARGET_FIELDS.map(f => (
+              <div key={f.key}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.g600, marginBottom: 4, display: 'block' }}>
+                  {f.label} {f.required && <span style={{ color: C.red }}>*</span>}
+                </label>
+                <select value={mapping[f.key] || ''} onChange={e => setMapping(prev => ({ ...prev, [f.key]: e.target.value }))}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: `1px solid ${mapping[f.key] ? C.green : C.g300}`, fontSize: 13, fontFamily: 'inherit', background: mapping[f.key] ? C.greenLight : C.white }}>
+                  <option value="">— Not mapped —</option>
+                  {rawData.headers.map(h => <option key={h} value={h}>{h}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+
+          {/* Preview */}
+          {mapping.date && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.g600, marginBottom: 6 }}>Preview (first 5 rows)</div>
+              <div style={{ overflow: 'auto', borderRadius: 8, border: `1px solid ${C.g200}` }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                  <thead><tr style={{ background: C.navy, color: C.white }}>
+                    {['Date', 'Impressions', 'Likes', 'Comments', 'Shares', 'Profile Views', 'Followers'].map(h =>
+                      <th key={h} style={{ padding: '6px 8px', textAlign: 'left' }}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {mappedPreview().map((r, i) => (
+                      <tr key={i} style={{ background: i % 2 ? C.g50 : C.white }}>
+                        <td style={{ padding: '4px 8px', color: r.date === '⚠ Invalid' ? C.red : C.g700, fontWeight: 600 }}>{r.date}</td>
+                        <td style={{ padding: '4px 8px' }}>{r.impressions}</td>
+                        <td style={{ padding: '4px 8px' }}>{r.likes}</td>
+                        <td style={{ padding: '4px 8px' }}>{r.comments}</td>
+                        <td style={{ padding: '4px 8px' }}>{r.shares}</td>
+                        <td style={{ padding: '4px 8px' }}>{r.profile_views}</td>
+                        <td style={{ padding: '4px 8px' }}>{r.followers}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <Btn v="secondary" sz="sm" onClick={() => setPreview(null)}>Cancel</Btn>
-            <Btn v="success" sz="sm" onClick={mapAndImport} disabled={importing}>{importing ? 'Importing...' : `Import ${preview.rows.length} rows`}</Btn>
+            <Btn v="secondary" sz="sm" onClick={reset}>Cancel</Btn>
+            <Btn v="success" sz="sm" onClick={doImport} disabled={!mapping.date || importing}>
+              {importing ? 'Importing...' : `Import ${rawData.rows.length} rows`}
+            </Btn>
           </div>
+        </div>
+      )}
+
+      {/* DONE STEP */}
+      {step === 'done' && importResult && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.green }}>Import complete</div>
+            <div style={{ fontSize: 12, color: C.g500 }}>{importResult.imported} rows imported{importResult.skipped > 0 ? `, ${importResult.skipped} skipped (invalid dates)` : ''}</div>
+          </div>
+          <Btn v="secondary" sz="sm" onClick={reset}>Import Another</Btn>
         </div>
       )}
     </Card>
