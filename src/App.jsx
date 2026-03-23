@@ -2864,12 +2864,38 @@ function AdminProfileAudit({ profile }) {
     setAnalyzing(true)
     try {
       // Save the audit first
-      const { data: saved } = await supabase.from('profile_audits').insert({
-        ...form, follower_count: parseInt(form.follower_count) || 0,
-        created_by: profile.id, status: 'draft'
-      }).select().single()
+      const insertPayload = {
+        prospect_name: form.prospect_name,
+        prospect_company: form.prospect_company,
+        prospect_title: form.prospect_title,
+        prospect_niche: form.prospect_niche,
+        prospect_linkedin_url: form.prospect_linkedin_url,
+        headline: form.headline,
+        about_section: form.about_section,
+        has_banner: !!form.has_banner,
+        has_featured: !!form.has_featured,
+        has_creator_mode: !!form.has_creator_mode,
+        follower_count: parseInt(form.follower_count) || 0,
+        posting_frequency: form.posting_frequency,
+        recent_hooks: form.recent_hooks,
+        content_types_used: form.content_types_used,
+        hashtag_usage: form.hashtag_usage,
+        cta_style: form.cta_style,
+        engagement_level: form.engagement_level,
+        profile_notes: form.profile_notes,
+        created_by: profile.id,
+        status: 'draft'
+      }
 
-      if (!saved) { setAnalyzing(false); return }
+      const { data: saved, error: insertErr } = await supabase.from('profile_audits').insert(insertPayload).select().single()
+
+      if (insertErr) {
+        console.error('Audit insert error:', insertErr)
+        alert(`Failed to save audit: ${insertErr.message}`)
+        setAnalyzing(false)
+        return
+      }
+      if (!saved) { alert('Failed to save audit — no data returned'); setAnalyzing(false); return }
 
       // Run AI analysis
       const raw = await callClaude(
@@ -2930,8 +2956,13 @@ Provide a thorough, honest audit. Return ONLY JSON.`,
         await supabase.from('profile_audits').update({
           audit_results: results, overall_score: results.overall_score || 0, status: 'analyzed'
         }).eq('id', saved.id)
+      } else {
+        console.error('Failed to parse audit results:', raw)
       }
-    } catch (e) { console.error('Audit failed:', e) }
+    } catch (e) {
+      console.error('Audit failed:', e)
+      alert(`Audit failed: ${e.message}`)
+    }
     setAnalyzing(false)
     setShowCreate(false)
     setForm({ prospect_name: '', prospect_company: '', prospect_title: '', prospect_niche: '', prospect_linkedin_url: '', headline: '', about_section: '', has_banner: false, has_featured: false, has_creator_mode: false, follower_count: 0, posting_frequency: '', recent_hooks: '', content_types_used: '', hashtag_usage: '', cta_style: '', engagement_level: '', profile_notes: '' })
