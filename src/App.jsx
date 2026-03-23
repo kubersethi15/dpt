@@ -1316,7 +1316,8 @@ function AdminClients({ profile }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   ADMIN: REPORTS
+   ADMIN: REPORTS (Rebuilt)
+   Weekly Entry → Weekly Summary → Monthly Report → CSV Backfill
    ═══════════════════════════════════════════════════════════════ */
 
 function AdminReports({ profile }) {
@@ -1324,313 +1325,311 @@ function AdminReports({ profile }) {
   const [selClient, setSelClient] = useState('')
   const [mode, setMode] = useState('entry')
 
-  const [selWeek, setSelWeek] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - d.getDay() + 1)
-    return d.toISOString().split('T')[0]
-  })
+  const getMonday = (d) => { const dt = new Date(d); dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7)); return dt }
+  const fmtD = (d) => d.toISOString().split('T')[0]
+  const [weekStart, setWeekStart] = useState(fmtD(getMonday(new Date())))
+  const weekEnd = (() => { const d = new Date(weekStart + 'T00:00:00'); d.setDate(d.getDate() + 6); return fmtD(d) })()
+  const weekLabel = (() => { const s = new Date(weekStart + 'T00:00:00'); const e = new Date(weekEnd + 'T00:00:00'); return `${s.toLocaleDateString('en-AU',{day:'numeric',month:'short'})} — ${e.toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})}` })()
 
-  const [weekData, setWeekData] = useState(null)
-  const [weekForm, setWeekForm] = useState({ impressions: '', likes: '', comments: '', shares: '', profile_views: '', followers: '', search_appearances: '' })
+  const [reportMonth, setReportMonth] = useState(() => { const d = new Date(); d.setMonth(d.getMonth()-1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` })
+
+  const [weeklyData, setWeeklyData] = useState({impressions:'',likes:'',comments:'',shares:'',profile_views:'',followers:'',search_appearances:''})
   const [weekPosts, setWeekPosts] = useState([])
   const [postMetrics, setPostMetrics] = useState({})
   const [loadingWeek, setLoadingWeek] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState('')
+  const [completedWeeks, setCompletedWeeks] = useState([])
 
-  const [reportType, setReportType] = useState('weekly')
-  const [reportWeek, setReportWeek] = useState('')
-  const [reportMonth, setReportMonth] = useState(() => new Date().toISOString().slice(0, 7))
   const [showReport, setShowReport] = useState(false)
-  const [reportData, setReportData] = useState({ weekly: [], posts: [], startDate: '', endDate: '', type: 'weekly' })
+  const [reportWeekly, setReportWeekly] = useState([])
+  const [reportPosts, setReportPosts] = useState([])
   const [loadingReport, setLoadingReport] = useState(false)
   const [aiRecs, setAiRecs] = useState(null)
   const [loadingRecs, setLoadingRecs] = useState(false)
   const [downloadingPdf, setDownloadingPdf] = useState(false)
 
   const client = clients.find(c => c.id === selClient)
-  const metricFields = ['impressions', 'likes', 'comments', 'shares', 'reposts', 'clicks', 'saves', 'video_views']
+  const mFields = ['impressions','likes','comments','shares','reposts','clicks','saves','video_views']
 
-  const getWeekMonday = (dateStr) => {
-    const d = new Date(dateStr + 'T00:00:00'); const day = d.getDay()
-    d.setDate(d.getDate() - (day === 0 ? 6 : day - 1)); return d.toISOString().split('T')[0]
-  }
-  const getWeekSunday = (mondayStr) => {
-    const d = new Date(mondayStr + 'T00:00:00'); d.setDate(d.getDate() + 6); return d.toISOString().split('T')[0]
-  }
-
-  const weekMonday = getWeekMonday(selWeek)
-  const weekSunday = getWeekSunday(weekMonday)
-  const weekLabel = `${new Date(weekMonday + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })} — ${new Date(weekSunday + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`
-
-  const fetchWeekData = async () => {
-    if (!selClient || !weekMonday) return
-    setLoadingWeek(true)
-    const { data: wd } = await supabase.from('report_data').select('*').eq('client_id', selClient).eq('week_start', weekMonday).maybeSingle()
-    setWeekData(wd)
-    if (wd) setWeekForm({ impressions: wd.impressions || '', likes: wd.likes || '', comments: wd.comments || '', shares: wd.shares || '', profile_views: wd.profile_views || '', followers: wd.followers || '', search_appearances: wd.search_appearances || '' })
-    else setWeekForm({ impressions: '', likes: '', comments: '', shares: '', profile_views: '', followers: '', search_appearances: '' })
-    const { data: posts } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id', selClient)
-      .not('posted_date', 'is', null).gte('posted_date', weekMonday).lte('posted_date', weekSunday).order('posted_date', { ascending: true })
-    setWeekPosts(posts || [])
-    const metrics = {}
-    ;(posts || []).forEach(p => { if (p.post_metrics?.length > 0) { const m = p.post_metrics[0]; metrics[p.id] = { impressions: m.impressions || '', likes: m.likes || '', comments: m.comments || '', shares: m.shares || '', reposts: m.reposts || '', clicks: m.clicks || '', saves: m.saves || '', video_views: m.video_views || '', notes: m.notes || '' } } })
-    setPostMetrics(metrics); setLoadingWeek(false)
+  const loadWeek = async () => {
+    if (!selClient||!weekStart) return
+    setLoadingWeek(true); setSaveMsg('')
+    const { data: wd } = await supabase.from('report_data').select('*').eq('client_id',selClient).eq('week_start',weekStart).single()
+    setWeeklyData(wd ? {impressions:wd.impressions||'',likes:wd.likes||'',comments:wd.comments||'',shares:wd.shares||'',profile_views:wd.profile_views||'',followers:wd.followers||'',search_appearances:wd.search_appearances||''} : {impressions:'',likes:'',comments:'',shares:'',profile_views:'',followers:'',search_appearances:''})
+    const { data: posts } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id',selClient).not('posted_date','is',null).gte('posted_date',weekStart).lte('posted_date',weekEnd).order('posted_date',{ascending:true})
+    setWeekPosts(posts||[])
+    const pm = {}
+    ;(posts||[]).forEach(p => { if (p.post_metrics?.length>0) { const m=p.post_metrics[0]; pm[p.id]={impressions:m.impressions||'',likes:m.likes||'',comments:m.comments||'',shares:m.shares||'',reposts:m.reposts||'',clicks:m.clicks||'',saves:m.saves||'',video_views:m.video_views||''} } })
+    setPostMetrics(pm); setLoadingWeek(false)
   }
 
-  useEffect(() => { if (selClient && weekMonday) fetchWeekData() }, [selClient, selWeek])
+  const loadCompleted = async () => { if (!selClient) return; const { data } = await supabase.from('report_data').select('week_start,week_label').eq('client_id',selClient).order('week_start',{ascending:false}).limit(16); setCompletedWeeks(data||[]) }
 
-  const updateWeekForm = (k, v) => setWeekForm(prev => ({ ...prev, [k]: v }))
-  const updatePostMetric = (postId, field, value) => setPostMetrics(prev => ({ ...prev, [postId]: { ...(prev[postId] || {}), [field]: value } }))
+  useEffect(() => { if (selClient) { loadWeek(); loadCompleted() } }, [selClient, weekStart])
 
-  const saveWeekData = async () => {
-    setSaving(true)
-    await supabase.from('report_data').upsert({ client_id: selClient, week_start: weekMonday, week_label: weekLabel,
-      impressions: parseInt(weekForm.impressions) || 0, likes: parseInt(weekForm.likes) || 0, comments: parseInt(weekForm.comments) || 0,
-      shares: parseInt(weekForm.shares) || 0, profile_views: parseInt(weekForm.profile_views) || 0,
-      followers: parseInt(weekForm.followers) || 0, search_appearances: parseInt(weekForm.search_appearances) || 0,
-    }, { onConflict: 'client_id,week_start' })
-    for (const postId of Object.keys(postMetrics)) {
-      const m = postMetrics[postId]; if (!m) continue
-      await supabase.from('post_metrics').upsert({ post_id: postId, impressions: parseInt(m.impressions) || 0, likes: parseInt(m.likes) || 0,
-        comments: parseInt(m.comments) || 0, shares: parseInt(m.shares) || 0, reposts: parseInt(m.reposts) || 0,
-        clicks: parseInt(m.clicks) || 0, saves: parseInt(m.saves) || 0, video_views: parseInt(m.video_views) || 0, notes: m.notes || '',
-      }, { onConflict: 'post_id' })
-    }
-    setSaving(false); fetchWeekData()
+  const saveWeek = async () => {
+    setSaving(true); setSaveMsg('')
+    await supabase.from('report_data').upsert({client_id:selClient,week_start:weekStart,week_label:weekLabel,impressions:parseInt(weeklyData.impressions)||0,likes:parseInt(weeklyData.likes)||0,comments:parseInt(weeklyData.comments)||0,shares:parseInt(weeklyData.shares)||0,profile_views:parseInt(weeklyData.profile_views)||0,followers:parseInt(weeklyData.followers)||0,search_appearances:parseInt(weeklyData.search_appearances)||0},{onConflict:'client_id,week_start'})
+    for (const pid of Object.keys(postMetrics)) { const m=postMetrics[pid]; if(!m) continue; await supabase.from('post_metrics').upsert({post_id:pid,impressions:parseInt(m.impressions)||0,likes:parseInt(m.likes)||0,comments:parseInt(m.comments)||0,shares:parseInt(m.shares)||0,reposts:parseInt(m.reposts)||0,clicks:parseInt(m.clicks)||0,saves:parseInt(m.saves)||0,video_views:parseInt(m.video_views)||0},{onConflict:'post_id'}) }
+    setSaving(false); setSaveMsg('Saved!'); loadCompleted(); setTimeout(()=>setSaveMsg(''),3000)
   }
 
-  const prevWeek = () => { const d = new Date(weekMonday + 'T00:00:00'); d.setDate(d.getDate() - 7); setSelWeek(d.toISOString().split('T')[0]) }
-  const nextWeek = () => { const d = new Date(weekMonday + 'T00:00:00'); d.setDate(d.getDate() + 7); setSelWeek(d.toISOString().split('T')[0]) }
+  const prevWeek = () => { const d=new Date(weekStart+'T00:00:00'); d.setDate(d.getDate()-7); setWeekStart(fmtD(d)) }
+  const nextWeek = () => { const d=new Date(weekStart+'T00:00:00'); d.setDate(d.getDate()+7); setWeekStart(fmtD(d)) }
 
-  const generateReport = async () => {
+  const generateMonthly = async () => {
+    if (!selClient||!reportMonth) return
     setLoadingReport(true); setAiRecs(null)
-    let startDate, endDate
-    if (reportType === 'weekly') { startDate = getWeekMonday(reportWeek || selWeek); endDate = getWeekSunday(startDate) }
-    else { startDate = reportMonth + '-01'; const d = new Date(reportMonth + '-01T00:00:00'); d.setMonth(d.getMonth() + 1); d.setDate(0); endDate = d.toISOString().split('T')[0] }
-    const { data: wkData } = await supabase.from('report_data').select('*').eq('client_id', selClient).gte('week_start', startDate).lte('week_start', endDate).order('week_start', { ascending: true })
-    const { data: pData } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id', selClient).not('posted_date', 'is', null).gte('posted_date', startDate).lte('posted_date', endDate).order('posted_date', { ascending: true })
-    setReportData({ weekly: wkData || [], posts: pData || [], startDate, endDate, type: reportType })
+    const [y,mo]=reportMonth.split('-').map(Number)
+    const ms=`${y}-${String(mo).padStart(2,'0')}-01`, me=`${y}-${String(mo).padStart(2,'0')}-${new Date(y,mo,0).getDate()}`
+    const { data:wk } = await supabase.from('report_data').select('*').eq('client_id',selClient).gte('week_start',ms).lte('week_start',me).order('week_start',{ascending:true})
+    setReportWeekly(wk||[])
+    const { data:pd } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id',selClient).not('posted_date','is',null).gte('posted_date',ms).lte('posted_date',me).order('posted_date',{ascending:true})
+    setReportPosts(pd||[])
     setLoadingReport(false); setShowReport(true)
-    if (reportType === 'monthly' && ((wkData?.length || 0) > 0 || (pData?.length || 0) > 0)) generateAIRecs(wkData || [], pData || [])
+    if ((wk?.length||0)>0||(pd?.length||0)>0) genAIRecs(wk||[],pd||[])
   }
 
-  const generateAIRecs = async (weekly, posts) => {
+  const genAIRecs = async (weekly,posts) => {
     setLoadingRecs(true)
-    const postsWithM = posts.filter(p => p.post_metrics?.length > 0).map(p => ({ content: p.content.slice(0, 100), type: p.content_type, m: p.post_metrics[0] }))
-    const totalImps = weekly.reduce((s, d) => s + (d.impressions || 0), 0)
-    const totalEng = weekly.reduce((s, d) => s + (d.likes || 0) + (d.comments || 0) + (d.shares || 0), 0)
-    const engRate = totalImps ? ((totalEng / totalImps) * 100).toFixed(1) : '0'
+    const pm=posts.filter(p=>p.post_metrics?.length>0).map(p=>({c:p.content.slice(0,100),t:p.content_type,m:p.post_metrics[0]}))
+    const tI=weekly.reduce((s,d)=>s+(d.impressions||0),0), tE=weekly.reduce((s,d)=>s+(d.likes||0)+(d.comments||0)+(d.shares||0),0), eR=tI?((tE/tI)*100).toFixed(1):'0'
     try {
-      const raw = await callClaude(`You are a LinkedIn strategist. Be specific and data-backed.
-OUTPUT: Return EXACTLY JSON: {"whats_working":["..."],"stop_doing":["..."],"content_mix_adjustments":"...","next_period_themes":["..."],"next_period_calendar":[{"day":"Monday","type":"Text","theme":"...","hook_suggestion":"..."},{"day":"Tuesday","type":"Carousel","theme":"...","hook_suggestion":"..."},{"day":"Wednesday","type":"Text","theme":"...","hook_suggestion":"..."},{"day":"Thursday","type":"Text","theme":"...","hook_suggestion":"..."},{"day":"Friday","type":"Text","theme":"...","hook_suggestion":"..."}],"growth_prediction":"...","key_insight":"..."}`,
-        `Analyze for ${client?.full_name} (${client?.niche || 'General'}): ${weekly.length} weeks, ${totalImps} impr, ${totalEng} eng, ${engRate}% rate. Followers: ${weekly.length > 1 ? weekly[0].followers + '→' + weekly[weekly.length-1].followers : 'N/A'}. Posts: ${postsWithM.map((p,i) => `${i+1}.(${p.type}) ${p.m.impressions}impr ${p.m.likes}likes "${p.content}..."`).join(' | ')}. Return ONLY JSON.`, false)
-      const match = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim().match(/\{[\s\S]*\}/)
-      if (match) setAiRecs(JSON.parse(match[0]))
-    } catch (e) { console.error('AI recs failed:', e) }
+      const raw = await callClaude(`You are a senior LinkedIn strategist analyzing monthly performance. Return EXACTLY a JSON object: {"whats_working":["..."],"stop_doing":["..."],"content_mix_adjustments":"...","next_period_themes":["..."],"next_period_calendar":[{"day":"Monday","type":"Text","theme":"...","hook_suggestion":"..."},{"day":"Tuesday","type":"Carousel","theme":"...","hook_suggestion":"..."},{"day":"Wednesday","type":"Text","theme":"...","hook_suggestion":"..."},{"day":"Thursday","type":"Text","theme":"...","hook_suggestion":"..."},{"day":"Friday","type":"Text","theme":"...","hook_suggestion":"..."}],"growth_prediction":"...","key_insight":"..."} No markdown.`,
+        `Monthly data for ${client?.full_name} (${client?.niche||'General'}): ${weekly.length} weeks, ${tI.toLocaleString()} impressions, ${tE.toLocaleString()} engagements, ${eR}% eng rate. Weekly: ${weekly.map(w=>`${w.week_label}:${w.impressions}impr`).join('|')}. Posts: ${pm.map((p,i)=>`${i+1}.(${p.t})${p.m.impressions}impr,${p.m.likes}likes — "${p.c}..."`).join('; ')}. Return ONLY JSON.`, false)
+      const m = raw.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim().match(/\{[\s\S]*\}/)
+      if (m) setAiRecs(JSON.parse(m[0]))
+    } catch(e) { console.error('AI recs failed:',e) }
     setLoadingRecs(false)
   }
 
-  const rd = reportData; const rWeekly = rd.weekly || []; const rPosts = rd.posts || []
-  const rTotalImps = rWeekly.reduce((s, d) => s + (d.impressions || 0), 0)
-  const rTotalEng = rWeekly.reduce((s, d) => s + (d.likes || 0) + (d.comments || 0) + (d.shares || 0), 0)
-  const rAvgEngRate = rTotalImps ? ((rTotalEng / rTotalImps) * 100).toFixed(1) : '0'
-  const rLatestFollowers = rWeekly.length ? rWeekly[rWeekly.length - 1].followers : 0
-  const rFirstFollowers = rWeekly.length ? rWeekly[0].followers : 0
-  const rFollowerGrowth = rFirstFollowers ? (((rLatestFollowers - rFirstFollowers) / rFirstFollowers) * 100).toFixed(1) : '0'
-  const rFollowerNet = rLatestFollowers - rFirstFollowers
-  const rTotalPV = rWeekly.reduce((s, d) => s + (d.profile_views || 0), 0)
-  const postsWithMetrics = rPosts.filter(p => p.post_metrics?.length > 0).map(p => ({ ...p, m: p.post_metrics[0] })).sort((a, b) => (b.m.impressions || 0) - (a.m.impressions || 0))
-  const typeCount = {}; rPosts.forEach(p => { typeCount[p.content_type || 'Text'] = (typeCount[p.content_type || 'Text'] || 0) + 1 })
-  const periodLabel = rd.type === 'weekly' ? `Week of ${new Date((rd.startDate || '')+'T00:00:00').toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})}` : new Date((rd.startDate || '')+'T00:00:00').toLocaleDateString('en-AU',{month:'long',year:'numeric'})
+  const rTI=reportWeekly.reduce((s,d)=>s+(d.impressions||0),0), rTE=reportWeekly.reduce((s,d)=>s+(d.likes||0)+(d.comments||0)+(d.shares||0),0)
+  const rER=rTI?((rTE/rTI)*100).toFixed(1):'0', rLF=reportWeekly.length?reportWeekly[reportWeekly.length-1].followers:0, rFF=reportWeekly.length?reportWeekly[0].followers:0
+  const rFG=rFF?(((rLF-rFF)/rFF)*100).toFixed(1):'0', rFN=rLF-rFF, rPV=reportWeekly.reduce((s,d)=>s+(d.profile_views||0),0)
+  const pwm=reportPosts.filter(p=>p.post_metrics?.length>0).map(p=>({...p,m:p.post_metrics[0]})).sort((a,b)=>(b.m.impressions||0)-(a.m.impressions||0))
+  const tc={}; reportPosts.forEach(p=>{tc[p.content_type||'Text']=(tc[p.content_type||'Text']||0)+1}); const tt=reportPosts.length||1
+  const mn=(()=>{if(!reportMonth) return ''; const[y,m]=reportMonth.split('-'); return new Date(y,m-1).toLocaleDateString('en-AU',{month:'long',year:'numeric'})})()
+
+  const downloadPdf = async () => {
+    setDownloadingPdf(true)
+    try {
+      const su=import.meta.env.VITE_SUPABASE_URL, sess=(await supabase.auth.getSession()).data.session
+      const res=await fetch(`${su}/functions/v1/generate-report`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${sess.access_token}`},body:JSON.stringify({client:{full_name:client?.full_name,company:client?.company,niche:client?.niche},weeklyData:reportWeekly,postsData:reportPosts,periodStart:reportMonth+'-01',periodEnd:reportMonth+'-'+new Date(...reportMonth.split('-').map(Number),0).getDate()})})
+      const data=await res.json()
+      if(data.pdf){const a=document.createElement('a');a.href=data.pdf;a.download=`Report_${client?.full_name?.replace(/\s+/g,'_')}_${mn.replace(/\s+/g,'_')}.pdf`;document.body.appendChild(a);a.click();document.body.removeChild(a)} else alert(data.error||'PDF failed')
+    } catch(e){alert(`PDF failed: ${e.message}`)}
+    setDownloadingPdf(false)
+  }
 
   return (
     <div className="fade-in">
       <PageHeader title="Reports" subtitle="Weekly data entry and report generation" />
-      <Sel label="Select Client" value={selClient} onChange={v => setSelClient(v)} options={[{ value: '', label: 'Choose a client...' }, ...clients.map(c => ({ value: c.id, label: `${c.full_name} — ${c.company || ''}` }))]} />
+      <Sel label="Select Client" value={selClient} onChange={v=>{setSelClient(v);setMode('entry')}} options={[{value:'',label:'Choose a client...'},...clients.map(c=>({value:c.id,label:`${c.full_name} — ${c.company||''}`}))]} />
 
       {selClient && (<>
-        <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `2px solid ${C.g200}` }}>
-          {[{ id: 'entry', label: 'Weekly Data Entry' }, { id: 'generate', label: 'Generate Report' }].map(t => (
-            <button key={t.id} onClick={() => setMode(t.id)} style={{ padding: '10px 20px', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: mode === t.id ? C.white : 'transparent', color: mode === t.id ? C.navy : C.g400, borderBottom: mode === t.id ? `3px solid ${C.blue}` : '3px solid transparent', marginBottom: -2 }}>{t.label}</button>))}
+        <div style={{display:'flex',gap:4,marginBottom:20,borderBottom:`2px solid ${C.g200}`}}>
+          {[{id:'entry',label:'Weekly Entry'},{id:'weekly_summary',label:'Weekly Summary'},{id:'monthly_report',label:'Monthly Report'},{id:'csv_backfill',label:'CSV Backfill'}].map(t=>(
+            <button key={t.id} onClick={()=>setMode(t.id)} style={{padding:'10px 18px',fontSize:14,fontWeight:600,border:'none',cursor:'pointer',fontFamily:'inherit',background:mode===t.id?C.white:'transparent',color:mode===t.id?C.navy:C.g400,borderBottom:mode===t.id?`3px solid ${C.blue}`:'3px solid transparent',marginBottom:-2}}>{t.label}</button>
+          ))}
         </div>
 
-        {mode === 'entry' && (<>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-            <Btn v="secondary" sz="sm" onClick={prevWeek}>←</Btn>
-            <div style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: C.navy }}>{weekLabel}</div>
-              <input type="date" value={selWeek} onChange={e => setSelWeek(e.target.value)} style={{ marginTop: 4, fontSize: 12, color: C.g500, border: 'none', background: 'transparent', textAlign: 'center', cursor: 'pointer', fontFamily: 'inherit' }} />
-            </div>
-            <Btn v="secondary" sz="sm" onClick={nextWeek}>→</Btn>
-          </div>
-
-          {loadingWeek ? <Loader /> : (<>
-            <Card style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                <div>
-                  <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>Account Metrics</h3>
-                  <div style={{ fontSize: 12, color: weekData ? C.green : C.g400 }}>{weekData ? '✓ Data saved for this week' : 'No data yet — enter numbers or upload CSV'}</div>
-                </div>
+        {/* ── WEEKLY ENTRY ── */}
+        {mode==='entry'&&(<>
+          <Card style={{marginBottom:16,padding:16}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <Btn v="secondary" sz="sm" onClick={prevWeek}>← Prev</Btn>
+              <div style={{textAlign:'center'}}>
+                <div style={{fontSize:16,fontWeight:700,color:C.navy}}>{weekLabel}</div>
+                <input type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)} style={{fontSize:12,color:C.g500,border:'none',background:'transparent',textAlign:'center',cursor:'pointer',fontFamily:'inherit'}} />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-                {[{ key: 'impressions', label: 'Impressions' },{ key: 'likes', label: 'Likes' },{ key: 'comments', label: 'Comments' },{ key: 'shares', label: 'Shares' },{ key: 'profile_views', label: 'Profile Views' },{ key: 'followers', label: 'Followers' },{ key: 'search_appearances', label: 'Search App.' }].map(f => (
-                  <div key={f.key}>
-                    <label style={{ fontSize: 11, fontWeight: 600, color: C.g500 }}>{f.label}</label>
-                    <input type="number" value={weekForm[f.key]} onChange={e => updateWeekForm(f.key, e.target.value)} placeholder="0"
-                      style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: `1px solid ${weekForm[f.key] ? C.blue : C.g300}`, fontSize: 14, fontFamily: 'inherit', fontWeight: 600 }} />
-                  </div>))}
+              <Btn v="secondary" sz="sm" onClick={nextWeek}>Next →</Btn>
+            </div>
+          </Card>
+
+          {loadingWeek?<Loader />:(<>
+            <Card style={{marginBottom:16}}>
+              <h3 style={{fontSize:15,fontWeight:700,color:C.navy,marginBottom:4}}>Account Metrics</h3>
+              <div style={{fontSize:12,color:C.g500,marginBottom:14}}>From LinkedIn Analytics for this week</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
+                {[['impressions','Impressions'],['likes','Likes'],['comments','Comments'],['shares','Shares'],['profile_views','Profile Views'],['followers','Followers'],['search_appearances','Search']].map(([k,l])=>(
+                  <div key={k}><label style={{fontSize:11,fontWeight:600,color:C.g500}}>{l}</label>
+                    <input type="number" value={weeklyData[k]} onChange={e=>setWeeklyData(p=>({...p,[k]:e.target.value}))} placeholder="0" style={{width:'100%',padding:'8px 10px',borderRadius:6,border:`1px solid ${C.g300}`,fontSize:13,fontFamily:'inherit'}} /></div>
+                ))}
               </div>
             </Card>
 
-            <Card style={{ marginBottom: 16 }}>
-              <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 4 }}>Posts This Week</h3>
-              <div style={{ fontSize: 12, color: C.g400, marginBottom: 14 }}>{weekPosts.length === 0 ? 'No posts posted this week. Mark posts as Posted with a date in Content Pipeline first.' : `${weekPosts.length} post${weekPosts.length !== 1 ? 's' : ''} — enter lifetime metrics from LinkedIn.`}</div>
-              {weekPosts.map(p => { const m = postMetrics[p.id] || {}; const hasM = p.post_metrics?.length > 0; return (
-                <div key={p.id} style={{ padding: 14, marginBottom: 10, borderRadius: 10, background: C.g50, border: `1px solid ${C.g200}` }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontSize: 12, color: C.g400 }}>{p.posted_date && new Date(p.posted_date+'T00:00:00').toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short'})}</span>
-                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.blueLight, color: C.blue }}>{p.content_type}</span>
-                    {hasM && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.greenLight, color: C.green }}>Saved</span>}
+            <Card style={{marginBottom:16}}>
+              <h3 style={{fontSize:15,fontWeight:700,color:C.navy,marginBottom:4}}>Posts This Week</h3>
+              <div style={{fontSize:12,color:C.g500,marginBottom:14}}>{weekPosts.length===0?'No posts marked as posted this week.':`${weekPosts.length} post${weekPosts.length!==1?'s':''} published. Enter metrics for each.`}</div>
+              {weekPosts.map(p=>{const m=postMetrics[p.id]||{}; return(
+                <div key={p.id} style={{padding:14,marginBottom:10,borderRadius:10,background:C.g50,border:`1px solid ${C.g200}`}}>
+                  <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:6}}>
+                    <span style={{fontSize:12,color:C.g400}}>{p.posted_date&&new Date(p.posted_date+'T00:00:00').toLocaleDateString('en-AU',{weekday:'short',month:'short',day:'numeric'})}</span>
+                    <span style={{fontSize:11,padding:'2px 8px',borderRadius:4,background:C.blueLight,color:C.blue}}>{p.content_type}</span>
+                    {p.post_metrics?.length>0&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:4,background:C.greenLight,color:C.green}}>Has metrics</span>}
                   </div>
-                  <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.5, marginBottom: 10, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.content}</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-                    {metricFields.map(f => (<div key={f}><label style={{ fontSize: 10, fontWeight: 600, color: C.g500, textTransform: 'capitalize' }}>{f.replace('_',' ')}</label>
-                      <input type="number" value={m[f] || ''} onChange={e => updatePostMetric(p.id, f, e.target.value)} placeholder="0" style={{ width: '100%', padding: '5px 8px', borderRadius: 4, border: `1px solid ${C.g300}`, fontSize: 12, fontFamily: 'inherit' }} /></div>))}
+                  <div style={{fontSize:13,color:C.g700,lineHeight:1.5,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',marginBottom:10}}>{p.content}</div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+                    {mFields.map(f=><div key={f}><label style={{fontSize:10,fontWeight:600,color:C.g500,textTransform:'capitalize'}}>{f.replace('_',' ')}</label>
+                      <input type="number" value={m[f]||''} onChange={e=>setPostMetrics(prev=>({...prev,[p.id]:{...(prev[p.id]||{}),[f]:e.target.value}}))} placeholder="0" style={{width:'100%',padding:'6px 8px',borderRadius:6,border:`1px solid ${C.g300}`,fontSize:12,fontFamily:'inherit'}} /></div>)}
                   </div>
                 </div>)})}
             </Card>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <Btn v="success" sz="lg" onClick={saveWeekData} disabled={saving}>{saving ? 'Saving...' : 'Save All Data for This Week'}</Btn>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+              <span style={{fontSize:13,fontWeight:600,color:C.green}}>{saveMsg}</span>
+              <Btn v="success" sz="lg" onClick={saveWeek} disabled={saving}>{saving?'Saving...':'Save This Week'}</Btn>
             </div>
+
+            {completedWeeks.length>0&&<Card><h3 style={{fontSize:14,fontWeight:700,color:C.navy,marginBottom:10}}>Completed Weeks</h3>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>{completedWeeks.map(w=>(
+                <span key={w.week_start} onClick={()=>setWeekStart(w.week_start)} style={{padding:'6px 12px',borderRadius:6,background:w.week_start===weekStart?C.blueLight:C.g100,border:`1px solid ${w.week_start===weekStart?C.blue:C.g200}`,color:w.week_start===weekStart?C.blue:C.g600,fontSize:12,fontWeight:600,cursor:'pointer'}}>{w.week_label}</span>
+              ))}</div></Card>}
           </>)}
         </>)}
 
-        {mode === 'generate' && (
-          <Card>
-            <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Generate Report</h3>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-              <Btn v={reportType === 'weekly' ? 'primary' : 'secondary'} sz="sm" onClick={() => setReportType('weekly')}>Weekly</Btn>
-              <Btn v={reportType === 'monthly' ? 'primary' : 'secondary'} sz="sm" onClick={() => setReportType('monthly')}>Monthly</Btn>
+        {/* ── WEEKLY SUMMARY ── */}
+        {mode==='weekly_summary'&&(<>
+          <Card style={{marginBottom:16,padding:16}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <Btn v="secondary" sz="sm" onClick={prevWeek}>←</Btn>
+              <div style={{fontSize:16,fontWeight:700,color:C.navy}}>{weekLabel}</div>
+              <Btn v="secondary" sz="sm" onClick={nextWeek}>→</Btn>
             </div>
-            {reportType === 'weekly' ? (
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 13, color: C.g500, marginBottom: 8 }}>Select the week. Shows that week's account data + posts.</div>
-                <input type="date" value={reportWeek || selWeek} onChange={e => setReportWeek(e.target.value)} style={{ padding: '10px 14px', borderRadius: 8, border: `1px solid ${C.g300}`, fontSize: 14, fontFamily: 'inherit' }} />
-              </div>
-            ) : (
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 13, color: C.g500, marginBottom: 8 }}>Select month. Aggregates all weeks + AI recommendations + content calendar.</div>
-                <input type="month" value={reportMonth} onChange={e => setReportMonth(e.target.value)} style={{ padding: '10px 14px', borderRadius: 8, border: `1px solid ${C.g300}`, fontSize: 14, fontFamily: 'inherit' }} />
-              </div>
-            )}
-            <Btn v="orange" sz="lg" onClick={generateReport} disabled={loadingReport}>{loadingReport ? 'Generating...' : `Generate ${reportType === 'weekly' ? 'Weekly' : 'Monthly'} Report`}</Btn>
           </Card>
-        )}
+          {loadingWeek?<Loader />:(<>
+            <div style={{display:'flex',gap:14,marginBottom:20,flexWrap:'wrap'}}>
+              <KPI icon="👁" label="Impressions" value={(parseInt(weeklyData.impressions)||0).toLocaleString()} />
+              <KPI icon="💬" label="Engagements" value={((parseInt(weeklyData.likes)||0)+(parseInt(weeklyData.comments)||0)+(parseInt(weeklyData.shares)||0)).toLocaleString()} />
+              <KPI icon="📊" label="Eng Rate" value={parseInt(weeklyData.impressions)?((((parseInt(weeklyData.likes)||0)+(parseInt(weeklyData.comments)||0)+(parseInt(weeklyData.shares)||0))/parseInt(weeklyData.impressions))*100).toFixed(1)+'%':'0%'} />
+              <KPI icon="👥" label="Followers" value={(parseInt(weeklyData.followers)||0).toLocaleString()} />
+            </div>
+            {weekPosts.length>0&&<Card>{weekPosts.map((p,i)=>{const m=p.post_metrics?.[0]||{}; const e=(m.likes||0)+(m.comments||0)+(m.shares||0); return(
+              <div key={p.id} style={{padding:12,marginBottom:8,borderRadius:8,background:i%2?C.g50:C.white,border:`1px solid ${C.g200}`}}>
+                <div style={{fontSize:13,color:C.g700,lineHeight:1.5,marginBottom:6,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{p.content}</div>
+                <div style={{display:'flex',gap:14,fontSize:12,color:C.g500}}>
+                  <span>{(m.impressions||0).toLocaleString()} impr</span><span>{m.likes||0} likes</span><span>{m.comments||0} cmts</span>
+                  {m.impressions>0&&<span style={{fontWeight:600,color:C.navy}}>{((e/m.impressions)*100).toFixed(1)}% eng</span>}
+                </div>
+              </div>)})}</Card>}
+            {!parseInt(weeklyData.impressions)&&weekPosts.length===0&&<EmptyState icon="▤" title="No data for this week" sub="Go to Weekly Entry to add numbers" />}
+          </>)}
+        </>)}
+
+        {/* ── MONTHLY REPORT ── */}
+        {mode==='monthly_report'&&(<>
+          <Card style={{marginBottom:20}}>
+            <h3 style={{fontSize:15,fontWeight:700,color:C.navy,marginBottom:4}}>Generate Monthly Report</h3>
+            <div style={{fontSize:13,color:C.g500,marginBottom:14}}>Pulls all weekly data and post metrics for the selected month.</div>
+            <div style={{display:'flex',gap:12,alignItems:'end'}}>
+              <div style={{flex:1}}><label style={{display:'block',marginBottom:6,fontSize:13,fontWeight:600,color:C.g700}}>Month</label>
+                <input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{width:'100%',padding:'10px 14px',borderRadius:8,border:`1px solid ${C.g300}`,fontSize:14,fontFamily:'inherit'}} /></div>
+              <Btn v="orange" sz="lg" onClick={generateMonthly} disabled={loadingReport}>{loadingReport?'Loading...':'Generate Report'}</Btn>
+            </div>
+          </Card>
+          {completedWeeks.length>0&&(()=>{const[y,m]=reportMonth.split('-').map(Number); const mw=completedWeeks.filter(w=>{const d=new Date(w.week_start);return d.getFullYear()===y&&d.getMonth()+1===m}); return mw.length>0?(
+            <Card style={{background:C.greenLight,border:`1px solid ${C.green}33`}}><div style={{fontSize:13,fontWeight:600,color:C.green}}>{mw.length} week{mw.length!==1?'s':''} of data for {mn}</div><div style={{fontSize:12,color:C.g600,marginTop:4}}>{mw.map(w=>w.week_label).join(' · ')}</div></Card>
+          ):(<Card style={{background:C.yellowLight,border:`1px solid ${C.yellow}33`}}><div style={{fontSize:13,color:C.g700}}>No data for {mn}. Add weekly data first.</div></Card>)})()}
+        </>)}
+
+        {/* ── CSV BACKFILL ── */}
+        {mode==='csv_backfill'&&(<>
+          <div style={{marginBottom:16,padding:'12px 16px',background:C.g50,borderRadius:8,fontSize:13,color:C.g500,border:`1px solid ${C.g200}`}}>
+            Bulk-import historical data when onboarding a new client. Upload a LinkedIn analytics CSV and map columns.
+          </div>
+          <CSVImport clientId={selClient} onImported={()=>{loadCompleted();loadWeek()}} />
+        </>)}
       </>)}
 
-      {/* ════════ REPORT MODAL ════════ */}
-      <Modal open={showReport} onClose={() => setShowReport(false)} title={`${rd.type === 'weekly' ? 'Weekly' : 'Monthly'} Report`} width={780}>
-        <div style={{ fontFamily: "'DM Sans', sans-serif" }}>
-          <div style={{ background: `linear-gradient(135deg, ${C.navy} 0%, #1a2744 100%)`, color: C.white, padding: '40px 36px', borderRadius: 14, marginBottom: 24 }}>
-            <div style={{ fontSize: 11, letterSpacing: 5, textTransform: 'uppercase', color: C.g400, marginBottom: 10 }}>DPT Agency — {rd.type === 'weekly' ? 'Weekly Snapshot' : 'Monthly Report'}</div>
-            <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: -1, marginBottom: 6 }}>LinkedIn Performance</div>
-            <div style={{ fontSize: 16, color: C.g300, marginBottom: 16 }}>{client?.full_name} — {client?.company}</div>
-            <div style={{ display: 'flex', gap: 20, fontSize: 13, color: C.g400 }}><span>{periodLabel}</span><span>{client?.niche}</span></div>
+      {/* ── MONTHLY REPORT MODAL ── */}
+      <Modal open={showReport} onClose={()=>setShowReport(false)} title={`Monthly Report — ${mn}`} width={780}>
+        <div style={{fontFamily:"'DM Sans',sans-serif"}}>
+          <div style={{background:`linear-gradient(135deg,${C.navy} 0%,#1a2744 100%)`,color:C.white,padding:'40px 36px',borderRadius:14,marginBottom:24}}>
+            <div style={{fontSize:11,letterSpacing:5,textTransform:'uppercase',color:C.g400,marginBottom:10}}>DPT Agency — Monthly Report</div>
+            <div style={{fontSize:28,fontWeight:900,letterSpacing:-1,marginBottom:4}}>{mn}</div>
+            <div style={{fontSize:15,color:C.g300}}>{client?.full_name} — {client?.company}</div>
+            <div style={{fontSize:12,color:C.g400,marginTop:12}}>{client?.niche} · {reportWeekly.length} weeks · {reportPosts.length} posts · {new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'})}</div>
           </div>
 
-          <div style={{ marginBottom: 24 }}>
-            <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 14, paddingBottom: 8, borderBottom: `3px solid ${C.orange}` }}>{rd.type === 'weekly' ? 'Week at a Glance' : 'Executive Summary'}</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-              {[{ label: 'Followers', value: rLatestFollowers.toLocaleString(), sub: rWeekly.length > 1 ? `${rFollowerNet>=0?'+':''}${rFollowerNet} (${rFollowerGrowth}%)` : 'This period', color: C.blue },
-                { label: 'Impressions', value: rTotalImps.toLocaleString(), sub: `${rWeekly.length} week${rWeekly.length!==1?'s':''}`, color: C.orange },
-                { label: 'Engagements', value: rTotalEng.toLocaleString(), sub: 'Likes+Comments+Shares', color: C.green },
-                { label: 'Eng Rate', value: `${rAvgEngRate}%`, sub: parseFloat(rAvgEngRate)>=3?'Above benchmark':'Benchmark: 2-3%', color: C.navy },
-                { label: 'Profile Views', value: rTotalPV.toLocaleString(), color: '#8B5CF6', sub: 'Total' },
-                { label: 'Posts', value: rPosts.length.toString(), sub: `${postsWithMetrics.length} tracked`, color: C.g700 },
-              ].map((k,i) => (<div key={i} style={{ padding: 14, borderRadius: 10, border: `1px solid ${C.g200}` }}>
-                <div style={{ fontSize: 24, fontWeight: 800, color: k.color, letterSpacing: -1 }}>{k.value}</div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: C.g600, marginTop: 2 }}>{k.label}</div>
-                <div style={{ fontSize: 11, color: C.g400, marginTop: 2 }}>{k.sub}</div>
-              </div>))}
+          <div style={{marginBottom:24}}>
+            <h3 style={{fontSize:18,fontWeight:800,color:C.navy,marginBottom:14,paddingBottom:8,borderBottom:`3px solid ${C.orange}`}}>Executive Summary</h3>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+              {[{l:'Followers',v:rLF.toLocaleString(),s:rFN>=0?`+${rFN} (+${rFG}%)`:`${rFN}`,c:C.blue},{l:'Impressions',v:rTI.toLocaleString(),s:`${reportWeekly.length} weeks`,c:C.orange},{l:'Engagements',v:rTE.toLocaleString(),s:'Likes+Comments+Shares',c:C.green},{l:'Eng Rate',v:`${rER}%`,s:'Benchmark: 2-3%',c:C.navy},{l:'Profile Views',v:rPV.toLocaleString(),s:'Total',c:'#8B5CF6'},{l:'Posts',v:reportPosts.length+'',s:`${pwm.length} tracked`,c:C.g700}].map((k,i)=>(
+                <div key={i} style={{padding:14,borderRadius:10,border:`1px solid ${C.g200}`}}>
+                  <div style={{fontSize:24,fontWeight:800,color:k.c,letterSpacing:-1}}>{k.v}</div>
+                  <div style={{fontSize:12,fontWeight:600,color:C.g600,marginTop:2}}>{k.l}</div>
+                  <div style={{fontSize:11,color:C.g400}}>{k.s}</div></div>))}
             </div>
           </div>
 
-          {rd.type === 'monthly' && rWeekly.length > 1 && (<div style={{ marginBottom: 24 }}>
-            <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 14, paddingBottom: 8, borderBottom: `3px solid ${C.blue}` }}>Week-over-Week</h3>
-            {rWeekly.map((d,i) => { const mx = Math.max(...rWeekly.map(r=>r.impressions||0)); const pct = mx ? ((d.impressions||0)/mx)*100 : 0; const eng=(d.likes||0)+(d.comments||0)+(d.shares||0); const er = d.impressions?((eng/d.impressions)*100).toFixed(1):'0'; return (
-              <div key={i} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
-                <div style={{ width:100, fontSize:11, color:C.g500, fontWeight:600 }}>{d.week_label}</div>
-                <div style={{ flex:1, height:26, background:C.g100, borderRadius:6, overflow:'hidden', position:'relative' }}>
-                  <div style={{ width:`${pct}%`, height:'100%', background:`linear-gradient(90deg, ${C.blue}, ${C.orange})`, borderRadius:6 }} />
-                  <span style={{ position:'absolute', right:8, top:'50%', transform:'translateY(-50%)', fontSize:11, fontWeight:600, color:pct>50?C.white:C.g600 }}>{(d.impressions||0).toLocaleString()} · {er}%</span>
-                </div>
+          {reportWeekly.length>0&&<div style={{marginBottom:24}}>
+            <h3 style={{fontSize:18,fontWeight:800,color:C.navy,marginBottom:14,paddingBottom:8,borderBottom:`3px solid ${C.blue}`}}>Week-over-Week</h3>
+            {reportWeekly.map((d,i)=>{const mx=Math.max(...reportWeekly.map(r=>r.impressions||0));const p=mx?((d.impressions||0)/mx)*100:0;const e=(d.likes||0)+(d.comments||0)+(d.shares||0);const er=d.impressions?((e/d.impressions)*100).toFixed(1):'0';return(
+              <div key={i} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+                <div style={{width:100,fontSize:11,color:C.g500,fontWeight:600,flexShrink:0}}>{d.week_label}</div>
+                <div style={{flex:1,height:26,background:C.g100,borderRadius:6,overflow:'hidden',position:'relative'}}>
+                  <div style={{width:`${p}%`,height:'100%',background:`linear-gradient(90deg,${C.blue},${C.orange})`,borderRadius:6}} />
+                  <span style={{position:'absolute',right:8,top:'50%',transform:'translateY(-50%)',fontSize:11,fontWeight:600,color:p>50?C.white:C.g600}}>{(d.impressions||0).toLocaleString()} · {er}%</span>
+                </div></div>)})}
+          </div>}
+
+          {reportPosts.length>0&&<div style={{marginBottom:24}}>
+            <h3 style={{fontSize:18,fontWeight:800,color:C.navy,marginBottom:14,paddingBottom:8,borderBottom:`3px solid ${C.green}`}}>Content Mix</h3>
+            <div style={{display:'flex',gap:12}}>{Object.entries(tc).sort((a,b)=>b[1]-a[1]).map(([t,n],i)=>{const cs=[C.blue,C.orange,C.green,'#8B5CF6',C.yellow];return(
+              <div key={t} style={{flex:1,padding:14,borderRadius:10,border:`1px solid ${C.g200}`,textAlign:'center'}}>
+                <div style={{fontSize:26,fontWeight:800,color:cs[i%cs.length]}}>{n}</div>
+                <div style={{fontSize:12,color:C.g600,fontWeight:600}}>{t}</div>
+                <div style={{fontSize:11,color:C.g400}}>{((n/tt)*100).toFixed(0)}%</div></div>)})}</div>
+          </div>}
+
+          {pwm.length>0&&<div style={{marginBottom:24}}>
+            <h3 style={{fontSize:18,fontWeight:800,color:C.navy,marginBottom:14,paddingBottom:8,borderBottom:`3px solid ${C.yellow}`}}>Post Performance</h3>
+            {pwm.map((p,i)=>{const m=p.m;const te=(m.likes||0)+(m.comments||0)+(m.shares||0);const er=m.impressions?((te/m.impressions)*100).toFixed(1):'0';return(
+              <div key={p.id} style={{padding:14,marginBottom:8,borderRadius:10,border:`1px solid ${i===0?C.green:C.g200}`,background:i===0?C.greenLight:C.white}}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+                  <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                    <span style={{width:24,height:24,borderRadius:'50%',background:i===0?C.green:C.g400,color:C.white,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700}}>{i+1}</span>
+                    <span style={{fontSize:12,color:C.g400}}>{p.posted_date&&new Date(p.posted_date+'T00:00:00').toLocaleDateString('en-AU',{month:'short',day:'numeric'})} · {p.content_type}</span></div>
+                  <span style={{fontSize:13,fontWeight:700,color:C.navy}}>{er}% eng</span></div>
+                <div style={{fontSize:13,color:C.g700,lineHeight:1.5,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',marginBottom:6}}>{p.content}</div>
+                <div style={{display:'flex',gap:14,fontSize:12,color:C.g500}}><span style={{fontWeight:600,color:C.navy}}>{(m.impressions||0).toLocaleString()} impr</span><span>{m.likes||0} likes</span><span>{m.comments||0} cmts</span><span>{m.shares||0} shares</span></div>
               </div>)})}
-            <div style={{ display:'flex', justifyContent:'space-between', marginTop:10, padding:'8px 14px', background:C.g50, borderRadius:8, fontSize:13 }}>
-              <span style={{ color:C.g500 }}>Followers: <strong style={{ color:C.navy }}>{rFirstFollowers.toLocaleString()}</strong> → <strong style={{ color:C.navy }}>{rLatestFollowers.toLocaleString()}</strong></span>
-              <span style={{ color:rFollowerNet>=0?C.green:C.red, fontWeight:600 }}>{rFollowerNet>=0?'+':''}{rFollowerNet.toLocaleString()} ({rFollowerGrowth}%)</span>
+          </div>}
+
+          {loadingRecs&&<div style={{textAlign:'center',padding:20}}><Loader /><div style={{fontSize:13,color:C.g500,marginTop:8}}>Generating recommendations...</div></div>}
+
+          {aiRecs&&<div style={{marginBottom:24}}>
+            <h3 style={{fontSize:18,fontWeight:800,color:C.navy,marginBottom:14,paddingBottom:8,borderBottom:`3px solid #8B5CF6`}}>Recommendations</h3>
+            {aiRecs.key_insight&&<div style={{padding:16,background:`linear-gradient(135deg,${C.navy},#1a2744)`,borderRadius:10,marginBottom:14,color:C.white}}>
+              <div style={{fontSize:11,textTransform:'uppercase',letterSpacing:2,color:C.g400,marginBottom:4}}>Key Insight</div>
+              <div style={{fontSize:15,fontWeight:600,lineHeight:1.5}}>{aiRecs.key_insight}</div></div>}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
+              <Card style={{background:C.greenLight,border:`1px solid ${C.green}33`}}><h4 style={{fontSize:14,fontWeight:700,color:C.green,marginBottom:8}}>Working</h4>
+                {(aiRecs.whats_working||[]).map((s,i)=><div key={i} style={{fontSize:13,color:C.g700,marginBottom:6,lineHeight:1.5}}>✓ {s}</div>)}</Card>
+              <Card style={{background:C.redLight,border:`1px solid ${C.red}33`}}><h4 style={{fontSize:14,fontWeight:700,color:C.red,marginBottom:8}}>Stop</h4>
+                {(aiRecs.stop_doing||[]).map((s,i)=><div key={i} style={{fontSize:13,color:C.g700,marginBottom:6,lineHeight:1.5}}>✕ {s}</div>)}</Card>
             </div>
-          </div>)}
-
-          {postsWithMetrics.length > 0 && (<div style={{ marginBottom: 24 }}>
-            <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 14, paddingBottom: 8, borderBottom: `3px solid ${C.green}` }}>Post Performance</h3>
-            {postsWithMetrics.map((p,i) => { const m=p.m; const tE=(m.likes||0)+(m.comments||0)+(m.shares||0)+(m.reposts||0); const er=m.impressions?((tE/m.impressions)*100).toFixed(1):'0'; const top=i===0; return (
-              <div key={p.id} style={{ padding:14, marginBottom:8, borderRadius:10, border:`1px solid ${top?C.green:C.g200}`, background:top?C.greenLight:C.white }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
-                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                    <span style={{ width:24, height:24, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:800, color:C.white, background:top?C.green:C.g400 }}>{i+1}</span>
-                    <span style={{ fontSize:12, color:C.g400 }}>{p.posted_date&&new Date(p.posted_date+'T00:00:00').toLocaleDateString('en-AU',{weekday:'short',month:'short',day:'numeric'})}</span>
-                    <span style={{ fontSize:11, padding:'2px 8px', borderRadius:4, background:C.g100, color:C.g600 }}>{p.content_type}</span>
-                    {top&&<span style={{ fontSize:11, padding:'2px 8px', borderRadius:4, background:C.green, color:C.white, fontWeight:600 }}>Top</span>}
-                  </div>
-                  <span style={{ fontSize:13, fontWeight:700, color:C.navy }}>{er}% eng</span>
-                </div>
-                <div style={{ fontSize:13, color:C.g700, lineHeight:1.5, marginBottom:8, display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden' }}>{p.content}</div>
-                <div style={{ display:'flex', gap:14, fontSize:12, color:C.g500 }}><span style={{ fontWeight:600, color:C.navy }}>{(m.impressions||0).toLocaleString()} impr</span><span>{m.likes||0} likes</span><span>{m.comments||0} cmts</span><span>{m.shares||0} shares</span>{m.clicks>0&&<span>{m.clicks} clicks</span>}{m.saves>0&&<span>{m.saves} saves</span>}</div>
-              </div>)})}
-          </div>)}
-
-          {rPosts.length > 0 && Object.keys(typeCount).length > 0 && (<div style={{ marginBottom:24 }}>
-            <h3 style={{ fontSize:16, fontWeight:700, color:C.navy, marginBottom:12 }}>Content Mix</h3>
-            <div style={{ display:'flex', gap:10 }}>{Object.entries(typeCount).sort((a,b)=>b[1]-a[1]).map(([t,c],i) => {
-              const cols=[C.blue,C.orange,C.green,'#8B5CF6']; return (<div key={t} style={{ flex:1, padding:12, borderRadius:8, border:`1px solid ${C.g200}`, textAlign:'center' }}>
-                <div style={{ fontSize:22, fontWeight:800, color:cols[i%cols.length] }}>{c}</div>
-                <div style={{ fontSize:11, color:C.g600, fontWeight:600 }}>{t}</div>
-              </div>)})}</div>
-          </div>)}
-
-          {rd.type === 'monthly' && loadingRecs && <div style={{ padding:24, textAlign:'center' }}><Loader /><div style={{ fontSize:13, color:C.g500, marginTop:8 }}>Generating AI recommendations...</div></div>}
-          {rd.type === 'monthly' && aiRecs && (<>
-            <div style={{ marginBottom:24 }}>
-              <h3 style={{ fontSize:18, fontWeight:800, color:C.navy, marginBottom:14, paddingBottom:8, borderBottom:`3px solid #8B5CF6` }}>Recommendations</h3>
-              {aiRecs.key_insight && <div style={{ padding:14, background:C.navy, borderRadius:10, marginBottom:14, color:C.white }}><div style={{ fontSize:10, textTransform:'uppercase', letterSpacing:2, color:C.g400, marginBottom:4 }}>Key Insight</div><div style={{ fontSize:14, fontWeight:600, lineHeight:1.5 }}>{aiRecs.key_insight}</div></div>}
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
-                <Card style={{ background:C.greenLight, border:`1px solid ${C.green}33` }}><h4 style={{ fontSize:13, fontWeight:700, color:C.green, marginBottom:8 }}>What's Working</h4>{(aiRecs.whats_working||[]).map((s,i)=><div key={i} style={{ fontSize:12, color:C.g700, marginBottom:6, lineHeight:1.5 }}>✓ {s}</div>)}</Card>
-                <Card style={{ background:C.redLight, border:`1px solid ${C.red}33` }}><h4 style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:8 }}>Stop Doing</h4>{(aiRecs.stop_doing||[]).map((s,i)=><div key={i} style={{ fontSize:12, color:C.g700, marginBottom:6, lineHeight:1.5 }}>✕ {s}</div>)}</Card>
-              </div>
-              {aiRecs.growth_prediction && <div style={{ padding:10, background:C.blueLight, borderRadius:8, marginBottom:14, fontSize:13, color:C.navy }}>📈 {aiRecs.growth_prediction}</div>}
-            </div>
-            {aiRecs.next_period_calendar && <div style={{ marginBottom:24 }}>
-              <h3 style={{ fontSize:16, fontWeight:700, color:C.navy, marginBottom:12 }}>Next Month's Calendar</h3>
-              {aiRecs.next_period_calendar.map((d,i) => (<div key={i} style={{ display:'flex', gap:12, padding:12, marginBottom:6, borderRadius:8, background:C.g50, border:`1px solid ${C.g200}` }}>
-                <div style={{ width:70, fontSize:13, fontWeight:700, color:C.navy }}>{d.day}</div>
-                <span style={{ fontSize:11, padding:'2px 8px', borderRadius:4, background:C.blueLight, color:C.blue }}>{d.type}</span>
-                <div style={{ flex:1 }}><div style={{ fontSize:13, fontWeight:600, color:C.g700 }}>{d.theme}</div><div style={{ fontSize:12, color:C.g500, fontStyle:'italic' }}>"{d.hook_suggestion}"</div></div>
-              </div>))}
+            {aiRecs.growth_prediction&&<div style={{padding:12,background:C.blueLight,borderRadius:8,marginBottom:14,fontSize:13,color:C.navy}}>📈 {aiRecs.growth_prediction}</div>}
+            {aiRecs.next_period_calendar&&<div>
+              <h4 style={{fontSize:15,fontWeight:700,color:C.navy,marginBottom:10}}>Next Month Calendar</h4>
+              {aiRecs.next_period_calendar.map((d,i)=>{const cs={Monday:C.red,Tuesday:C.orange,Wednesday:C.blue,Thursday:'#8B5CF6',Friday:C.green};return(
+                <div key={i} style={{display:'flex',gap:12,padding:12,marginBottom:6,borderRadius:8,background:C.g50,border:`1px solid ${C.g200}`}}>
+                  <div style={{width:75,flexShrink:0}}><div style={{fontSize:13,fontWeight:700,color:cs[d.day]||C.g500}}>{d.day}</div><span style={{fontSize:11,color:C.g500}}>{d.type}</span></div>
+                  <div><div style={{fontSize:13,fontWeight:600,color:C.navy}}>{d.theme}</div><div style={{fontSize:12,color:C.g500,fontStyle:'italic'}}>"{d.hook_suggestion}"</div></div>
+                </div>)})}
             </div>}
-          </>)}
+          </div>}
 
-          {rWeekly.length===0 && rPosts.length===0 && <EmptyState icon="▤" title="No data" sub="Enter weekly data first" />}
-          <div style={{ padding:14, background:C.g50, borderRadius:8, textAlign:'center', fontSize:12, color:C.g400, borderTop:`2px solid ${C.g200}` }}>Confidential — DPT Agency — {new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'})}</div>
+          {reportWeekly.length===0&&reportPosts.length===0&&<EmptyState icon="▤" title={`No data for ${mn}`} sub="Enter weekly data first" />}
+
+          <div style={{marginTop:24,padding:14,background:C.g50,borderRadius:8,textAlign:'center',fontSize:12,color:C.g400,borderTop:`2px solid ${C.g200}`}}>
+            Confidential — DPT Agency — {new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'})}</div>
         </div>
-        <div style={{ display:'flex', justifyContent:'flex-end', gap:12, marginTop:20, paddingTop:16, borderTop:`1px solid ${C.g200}` }}>
-          <Btn v="secondary" onClick={() => setShowReport(false)}>Close</Btn>
-          <Btn v="secondary" onClick={() => window.print()}>Print</Btn>
-          <Btn v="orange" onClick={async () => {
-            setDownloadingPdf(true); try { const url = import.meta.env.VITE_SUPABASE_URL; const s = (await supabase.auth.getSession()).data.session
-            const res = await fetch(`${url}/functions/v1/generate-report`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${s.access_token}`}, body:JSON.stringify({client:{full_name:client?.full_name,company:client?.company,niche:client?.niche},weeklyData:rWeekly,postsData:rPosts,periodStart:rd.startDate,periodEnd:rd.endDate}) })
-            const d = await res.json(); if(d.pdf){const l=document.createElement('a');l.href=d.pdf;l.download=`Report_${client?.full_name?.replace(/\s+/g,'_')}_${rd.startDate}.pdf`;document.body.appendChild(l);l.click();document.body.removeChild(l)}else alert(d.error||'Failed')
-            }catch(e){alert(`PDF failed: ${e.message}`)} setDownloadingPdf(false)
-          }} disabled={downloadingPdf}>{downloadingPdf ? 'Generating...' : 'Download PDF'}</Btn>
+        <div style={{display:'flex',justifyContent:'flex-end',gap:12,marginTop:20,paddingTop:16,borderTop:`1px solid ${C.g200}`}}>
+          <Btn v="secondary" onClick={()=>setShowReport(false)}>Close</Btn>
+          <Btn v="secondary" onClick={()=>window.print()}>Print</Btn>
+          <Btn v="orange" onClick={downloadPdf} disabled={downloadingPdf}>{downloadingPdf?'Generating...':'Download PDF'}</Btn>
         </div>
       </Modal>
     </div>
