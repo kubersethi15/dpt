@@ -1522,13 +1522,18 @@ Provide specific, actionable recommendations and a suggested content calendar fo
 
   return (
     <div className="fade-in">
-      <PageHeader title="Reports" subtitle="Weekly account metrics + per-post performance" />
+      <PageHeader title="Reports" subtitle="Build and generate client performance reports" />
       <Sel label="Select Client" value={selClient} onChange={v => { setSelClient(v); setPostedPosts([]) }}
         options={[{ value: '', label: 'Choose a client...' }, ...clients.map(c => ({ value: c.id, label: `${c.full_name} — ${c.company || ''}` }))]} />
 
       {selClient && (<>
+        {/* Workflow guide */}
+        <div style={{ padding: '12px 16px', background: C.g50, borderRadius: 8, marginBottom: 16, fontSize: 13, color: C.g500, lineHeight: 1.6, border: `1px solid ${C.g200}` }}>
+          <strong style={{ color: C.g700 }}>Workflow:</strong> Step 1 — upload CSV or add weekly account numbers. Step 2 — enter per-post metrics for posted content. Step 3 — generate the report with AI recommendations.
+        </div>
+
         <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `2px solid ${C.g200}` }}>
-          {[{ id: 'weekly', label: 'Weekly Account Data' }, { id: 'posts', label: 'Per-Post Metrics' }, { id: 'generate', label: 'Generate Report' }].map(t => (
+          {[{ id: 'weekly', label: '1. Weekly Data' }, { id: 'posts', label: '2. Post Metrics' }, { id: 'generate', label: '3. Generate Report' }].map(t => (
             <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: '10px 20px', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
               background: tab === t.id ? C.white : 'transparent', color: tab === t.id ? C.navy : C.g400,
               borderBottom: tab === t.id ? `3px solid ${C.blue}` : '3px solid transparent', marginBottom: -2 }}>{t.label}</button>
@@ -1537,7 +1542,7 @@ Provide specific, actionable recommendations and a suggested content calendar fo
 
         {tab === 'weekly' && (<>
           <CSVImport clientId={selClient} onImported={refresh} />
-          <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}><Btn onClick={() => setShowAdd(true)}>+ Add Weekly Data</Btn></div>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}><Btn onClick={() => setShowAdd(true)}>+ Add Manually</Btn></div>
           {loading ? <Loader /> : reportData.length === 0 ? <EmptyState icon="▤" title="No data yet" sub="Add weekly LinkedIn metrics" /> : (
             <Card style={{ overflow: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr style={{ background: C.navy, color: C.white }}>
@@ -3223,8 +3228,8 @@ function CSVImport({ clientId, onImported }) {
           <div style={{ fontSize: 12, color: C.g500 }}>Upload a LinkedIn analytics export or any CSV with weekly data</div>
         </div>
         {!preview && (
-          <label style={{ cursor: 'pointer' }}>
-            <Btn v="secondary" sz="sm" disabled={parsing}>{parsing ? 'Reading...' : 'Upload CSV'}</Btn>
+          <label style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 8, background: C.g100, color: C.g700, fontSize: 13, fontWeight: 600 }}>
+            {parsing ? 'Reading...' : 'Upload CSV'}
             <input type="file" accept=".csv,.tsv,.txt" onChange={handleFile} style={{ display: 'none' }} />
           </label>
         )}
