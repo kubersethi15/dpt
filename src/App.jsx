@@ -1322,103 +1322,96 @@ function AdminClients({ profile }) {
 function AdminReports({ profile }) {
   const { clients } = useClients()
   const [selClient, setSelClient] = useState('')
-  const { data: reportData, loading, refresh } = useReportData(selClient)
-  const [showAdd, setShowAdd] = useState(false)
-  const [showReport, setShowReport] = useState(false)
-  const [tab, setTab] = useState('weekly')
+  const [mode, setMode] = useState('entry')
 
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
-  const [postedPosts, setPostedPosts] = useState([])
+  const [selWeek, setSelWeek] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - d.getDay() + 1)
+    return d.toISOString().split('T')[0]
+  })
+
+  const [weekData, setWeekData] = useState(null)
+  const [weekForm, setWeekForm] = useState({ impressions: '', likes: '', comments: '', shares: '', profile_views: '', followers: '', search_appearances: '' })
+  const [weekPosts, setWeekPosts] = useState([])
   const [postMetrics, setPostMetrics] = useState({})
-  const [loadingPosts, setLoadingPosts] = useState(false)
-
-  const [wLabel, setWLabel] = useState('')
-  const [wStart, setWStart] = useState('')
-  const [wImpressions, setWImpressions] = useState('')
-  const [wLikes, setWLikes] = useState('')
-  const [wComments, setWComments] = useState('')
-  const [wShares, setWShares] = useState('')
-  const [wProfileViews, setWProfileViews] = useState('')
-  const [wFollowers, setWFollowers] = useState('')
-  const [wSearch, setWSearch] = useState('')
+  const [loadingWeek, setLoadingWeek] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  const [reportFrom, setReportFrom] = useState('')
-  const [reportTo, setReportTo] = useState('')
-  const [reportPosts, setReportPosts] = useState([])
-  const [reportWeekly, setReportWeekly] = useState([])
+  const [reportType, setReportType] = useState('weekly')
+  const [reportWeek, setReportWeek] = useState('')
+  const [reportMonth, setReportMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [showReport, setShowReport] = useState(false)
+  const [reportData, setReportData] = useState({ weekly: [], posts: [], startDate: '', endDate: '', type: 'weekly' })
   const [loadingReport, setLoadingReport] = useState(false)
+  const [aiRecs, setAiRecs] = useState(null)
+  const [loadingRecs, setLoadingRecs] = useState(false)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
 
   const client = clients.find(c => c.id === selClient)
   const metricFields = ['impressions', 'likes', 'comments', 'shares', 'reposts', 'clicks', 'saves', 'video_views']
 
-  const fetchPostedPosts = async () => {
-    if (!selClient || !dateFrom || !dateTo) return
-    setLoadingPosts(true)
+  const getWeekMonday = (dateStr) => {
+    const d = new Date(dateStr + 'T00:00:00'); const day = d.getDay()
+    d.setDate(d.getDate() - (day === 0 ? 6 : day - 1)); return d.toISOString().split('T')[0]
+  }
+  const getWeekSunday = (mondayStr) => {
+    const d = new Date(mondayStr + 'T00:00:00'); d.setDate(d.getDate() + 6); return d.toISOString().split('T')[0]
+  }
+
+  const weekMonday = getWeekMonday(selWeek)
+  const weekSunday = getWeekSunday(weekMonday)
+  const weekLabel = `${new Date(weekMonday + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })} — ${new Date(weekSunday + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`
+
+  const fetchWeekData = async () => {
+    if (!selClient || !weekMonday) return
+    setLoadingWeek(true)
+    const { data: wd } = await supabase.from('report_data').select('*').eq('client_id', selClient).eq('week_start', weekMonday).maybeSingle()
+    setWeekData(wd)
+    if (wd) setWeekForm({ impressions: wd.impressions || '', likes: wd.likes || '', comments: wd.comments || '', shares: wd.shares || '', profile_views: wd.profile_views || '', followers: wd.followers || '', search_appearances: wd.search_appearances || '' })
+    else setWeekForm({ impressions: '', likes: '', comments: '', shares: '', profile_views: '', followers: '', search_appearances: '' })
     const { data: posts } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id', selClient)
-      .not('posted_date', 'is', null).gte('posted_date', dateFrom).lte('posted_date', dateTo).order('posted_date', { ascending: true })
-    setPostedPosts(posts || [])
+      .not('posted_date', 'is', null).gte('posted_date', weekMonday).lte('posted_date', weekSunday).order('posted_date', { ascending: true })
+    setWeekPosts(posts || [])
     const metrics = {}
-    ;(posts || []).forEach(p => {
-      if (p.post_metrics?.length > 0) {
-        const m = p.post_metrics[0]
-        metrics[p.id] = { impressions: m.impressions || '', likes: m.likes || '', comments: m.comments || '', shares: m.shares || '', reposts: m.reposts || '', clicks: m.clicks || '', saves: m.saves || '', video_views: m.video_views || '', notes: m.notes || '' }
-      }
-    })
-    setPostMetrics(metrics)
-    setLoadingPosts(false)
+    ;(posts || []).forEach(p => { if (p.post_metrics?.length > 0) { const m = p.post_metrics[0]; metrics[p.id] = { impressions: m.impressions || '', likes: m.likes || '', comments: m.comments || '', shares: m.shares || '', reposts: m.reposts || '', clicks: m.clicks || '', saves: m.saves || '', video_views: m.video_views || '', notes: m.notes || '' } } })
+    setPostMetrics(metrics); setLoadingWeek(false)
   }
 
-  useEffect(() => { if (selClient && dateFrom && dateTo) fetchPostedPosts() }, [selClient, dateFrom, dateTo])
+  useEffect(() => { if (selClient && weekMonday) fetchWeekData() }, [selClient, selWeek])
 
-  const handleSaveWeekly = async () => {
-    if (!selClient || !wStart) return
-    setSaving(true)
-    await supabase.from('report_data').upsert({ client_id: selClient, week_label: wLabel || `Week of ${wStart}`, week_start: wStart,
-      impressions: parseInt(wImpressions) || 0, likes: parseInt(wLikes) || 0, comments: parseInt(wComments) || 0,
-      shares: parseInt(wShares) || 0, profile_views: parseInt(wProfileViews) || 0,
-      followers: parseInt(wFollowers) || 0, search_appearances: parseInt(wSearch) || 0,
-    }, { onConflict: 'client_id,week_start' })
-    setShowAdd(false)
-    setWLabel(''); setWStart(''); setWImpressions(''); setWLikes(''); setWComments(''); setWShares(''); setWProfileViews(''); setWFollowers(''); setWSearch('')
-    setSaving(false); refresh()
-  }
-
+  const updateWeekForm = (k, v) => setWeekForm(prev => ({ ...prev, [k]: v }))
   const updatePostMetric = (postId, field, value) => setPostMetrics(prev => ({ ...prev, [postId]: { ...(prev[postId] || {}), [field]: value } }))
 
-  const saveAllPostMetrics = async () => {
+  const saveWeekData = async () => {
     setSaving(true)
+    await supabase.from('report_data').upsert({ client_id: selClient, week_start: weekMonday, week_label: weekLabel,
+      impressions: parseInt(weekForm.impressions) || 0, likes: parseInt(weekForm.likes) || 0, comments: parseInt(weekForm.comments) || 0,
+      shares: parseInt(weekForm.shares) || 0, profile_views: parseInt(weekForm.profile_views) || 0,
+      followers: parseInt(weekForm.followers) || 0, search_appearances: parseInt(weekForm.search_appearances) || 0,
+    }, { onConflict: 'client_id,week_start' })
     for (const postId of Object.keys(postMetrics)) {
       const m = postMetrics[postId]; if (!m) continue
       await supabase.from('post_metrics').upsert({ post_id: postId, impressions: parseInt(m.impressions) || 0, likes: parseInt(m.likes) || 0,
-        comments: parseInt(m.comments) || 0, shares: parseInt(m.shares) || 0, reposts: parseInt(m.reposts) || 0, clicks: parseInt(m.clicks) || 0,
-        saves: parseInt(m.saves) || 0, video_views: parseInt(m.video_views) || 0, notes: m.notes || '' }, { onConflict: 'post_id' })
+        comments: parseInt(m.comments) || 0, shares: parseInt(m.shares) || 0, reposts: parseInt(m.reposts) || 0,
+        clicks: parseInt(m.clicks) || 0, saves: parseInt(m.saves) || 0, video_views: parseInt(m.video_views) || 0, notes: m.notes || '',
+      }, { onConflict: 'post_id' })
     }
-    setSaving(false); fetchPostedPosts()
+    setSaving(false); fetchWeekData()
   }
+
+  const prevWeek = () => { const d = new Date(weekMonday + 'T00:00:00'); d.setDate(d.getDate() - 7); setSelWeek(d.toISOString().split('T')[0]) }
+  const nextWeek = () => { const d = new Date(weekMonday + 'T00:00:00'); d.setDate(d.getDate() + 7); setSelWeek(d.toISOString().split('T')[0]) }
 
   const generateReport = async () => {
-    if (!selClient || !reportFrom || !reportTo) return
-    setLoadingReport(true)
-    setAiRecs(null)
-    const { data: wkData } = await supabase.from('report_data').select('*').eq('client_id', selClient)
-      .gte('week_start', reportFrom).lte('week_start', reportTo).order('week_start', { ascending: true })
-    setReportWeekly(wkData || [])
-    const { data: pData, error: pErr } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id', selClient)
-      .not('posted_date', 'is', null).gte('posted_date', reportFrom).lte('posted_date', reportTo).order('posted_date', { ascending: true })
-    if (pErr) console.error('Report posts error:', pErr)
-    setReportPosts(pData || [])
+    setLoadingReport(true); setAiRecs(null)
+    let startDate, endDate
+    if (reportType === 'weekly') { startDate = getWeekMonday(reportWeek || selWeek); endDate = getWeekSunday(startDate) }
+    else { startDate = reportMonth + '-01'; const d = new Date(reportMonth + '-01T00:00:00'); d.setMonth(d.getMonth() + 1); d.setDate(0); endDate = d.toISOString().split('T')[0] }
+    const { data: wkData } = await supabase.from('report_data').select('*').eq('client_id', selClient).gte('week_start', startDate).lte('week_start', endDate).order('week_start', { ascending: true })
+    const { data: pData } = await supabase.from('posts').select('*, post_metrics(*)').eq('client_id', selClient).not('posted_date', 'is', null).gte('posted_date', startDate).lte('posted_date', endDate).order('posted_date', { ascending: true })
+    setReportData({ weekly: wkData || [], posts: pData || [], startDate, endDate, type: reportType })
     setLoadingReport(false); setShowReport(true)
-
-    // Generate AI recommendations in background
-    if ((wkData?.length || 0) > 0 || (pData?.length || 0) > 0) {
-      generateAIRecs(wkData || [], pData || [])
-    }
+    if (reportType === 'monthly' && ((wkData?.length || 0) > 0 || (pData?.length || 0) > 0)) generateAIRecs(wkData || [], pData || [])
   }
-
-  const [aiRecs, setAiRecs] = useState(null)
-  const [loadingRecs, setLoadingRecs] = useState(false)
 
   const generateAIRecs = async (weekly, posts) => {
     setLoadingRecs(true)
@@ -1426,532 +1419,218 @@ function AdminReports({ profile }) {
     const totalImps = weekly.reduce((s, d) => s + (d.impressions || 0), 0)
     const totalEng = weekly.reduce((s, d) => s + (d.likes || 0) + (d.comments || 0) + (d.shares || 0), 0)
     const engRate = totalImps ? ((totalEng / totalImps) * 100).toFixed(1) : '0'
-
     try {
-      const raw = await callClaude(
-        `You are a senior LinkedIn strategist analyzing a client's content performance data. Provide specific, actionable, data-backed recommendations. Be direct — no fluff.
-
-OUTPUT: Return EXACTLY a JSON object:
-{
-  "whats_working": ["specific thing 1 with data reference", "specific thing 2"],
-  "stop_doing": ["specific thing to stop with reason"],
-  "content_mix_adjustments": "1-2 sentences on how to adjust the content mix",
-  "next_period_themes": ["theme 1 with rationale", "theme 2", "theme 3"],
-  "next_period_calendar": [
-    {"day": "Monday", "type": "Text", "theme": "...", "hook_suggestion": "..."},
-    {"day": "Tuesday", "type": "Carousel", "theme": "...", "hook_suggestion": "..."},
-    {"day": "Wednesday", "type": "Text", "theme": "...", "hook_suggestion": "..."},
-    {"day": "Thursday", "type": "Text", "theme": "...", "hook_suggestion": "..."},
-    {"day": "Friday", "type": "Text", "theme": "...", "hook_suggestion": "..."}
-  ],
-  "growth_prediction": "1 sentence on expected trajectory if recommendations are followed",
-  "key_insight": "The single most important insight from this data"
-}
-No markdown. Just JSON.`,
-        `Analyze this LinkedIn performance data for ${client?.full_name} (${client?.niche || 'General'}):
-
-WEEKLY DATA (${weekly.length} weeks):
-Total impressions: ${totalImps.toLocaleString()}
-Total engagements: ${totalEng.toLocaleString()}
-Avg engagement rate: ${engRate}%
-Follower trend: ${weekly.length > 1 ? `${weekly[0].followers || 0} → ${weekly[weekly.length-1].followers || 0}` : 'N/A'}
-Weekly breakdown: ${weekly.map(w => `${w.week_label}: ${w.impressions} impr, ${(w.likes||0)+(w.comments||0)+(w.shares||0)} eng`).join(' | ')}
-
-POSTS WITH METRICS (${postsWithM.length} posts):
-${postsWithM.map((p, i) => `Post ${i+1} (${p.type}): ${p.m.impressions} impr, ${p.m.likes} likes, ${p.m.comments} comments, ${p.m.shares} shares — "${p.content}..."`).join('\n')}
-
-Content types used: ${[...new Set(posts.map(p => p.content_type))].join(', ')}
-
-Provide specific, actionable recommendations and a suggested content calendar for next week. Return ONLY JSON.`,
-        false
-      )
-      const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
-      const match = cleaned.match(/\{[\s\S]*\}/)
+      const raw = await callClaude(`You are a LinkedIn strategist. Be specific and data-backed.
+OUTPUT: Return EXACTLY JSON: {"whats_working":["..."],"stop_doing":["..."],"content_mix_adjustments":"...","next_period_themes":["..."],"next_period_calendar":[{"day":"Monday","type":"Text","theme":"...","hook_suggestion":"..."},{"day":"Tuesday","type":"Carousel","theme":"...","hook_suggestion":"..."},{"day":"Wednesday","type":"Text","theme":"...","hook_suggestion":"..."},{"day":"Thursday","type":"Text","theme":"...","hook_suggestion":"..."},{"day":"Friday","type":"Text","theme":"...","hook_suggestion":"..."}],"growth_prediction":"...","key_insight":"..."}`,
+        `Analyze for ${client?.full_name} (${client?.niche || 'General'}): ${weekly.length} weeks, ${totalImps} impr, ${totalEng} eng, ${engRate}% rate. Followers: ${weekly.length > 1 ? weekly[0].followers + '→' + weekly[weekly.length-1].followers : 'N/A'}. Posts: ${postsWithM.map((p,i) => `${i+1}.(${p.type}) ${p.m.impressions}impr ${p.m.likes}likes "${p.content}..."`).join(' | ')}. Return ONLY JSON.`, false)
+      const match = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim().match(/\{[\s\S]*\}/)
       if (match) setAiRecs(JSON.parse(match[0]))
     } catch (e) { console.error('AI recs failed:', e) }
     setLoadingRecs(false)
   }
 
-  const [downloadingPdf, setDownloadingPdf] = useState(false)
-
-  const downloadPdf = async () => {
-    setDownloadingPdf(true)
-    try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      const session = (await supabase.auth.getSession()).data.session
-      const res = await fetch(`${supabaseUrl}/functions/v1/generate-report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
-        body: JSON.stringify({
-          client: { full_name: client?.full_name, company: client?.company, niche: client?.niche },
-          weeklyData: reportWeekly,
-          postsData: reportPosts,
-          periodStart: reportFrom,
-          periodEnd: reportTo,
-        })
-      })
-      const data = await res.json()
-      if (data.pdf) {
-        // data.pdf is a data URI — trigger download
-        const link = document.createElement('a')
-        link.href = data.pdf
-        link.download = `LinkedIn_Report_${client?.full_name?.replace(/\s+/g, '_')}_${reportFrom}_${reportTo}.pdf`
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-      } else {
-        alert(data.error || 'Failed to generate PDF')
-      }
-    } catch (e) {
-      alert(`PDF generation failed: ${e.message}. Make sure the generate-report Edge Function is deployed.`)
-    }
-    setDownloadingPdf(false)
-  }
-
-  const rTotalImps = reportWeekly.reduce((s, d) => s + (d.impressions || 0), 0)
-  const rTotalEng = reportWeekly.reduce((s, d) => s + (d.likes || 0) + (d.comments || 0) + (d.shares || 0), 0)
+  const rd = reportData; const rWeekly = rd.weekly || []; const rPosts = rd.posts || []
+  const rTotalImps = rWeekly.reduce((s, d) => s + (d.impressions || 0), 0)
+  const rTotalEng = rWeekly.reduce((s, d) => s + (d.likes || 0) + (d.comments || 0) + (d.shares || 0), 0)
   const rAvgEngRate = rTotalImps ? ((rTotalEng / rTotalImps) * 100).toFixed(1) : '0'
-  const rLatestFollowers = reportWeekly.length ? reportWeekly[reportWeekly.length - 1].followers : 0
-  const rFirstFollowers = reportWeekly.length ? reportWeekly[0].followers : 0
+  const rLatestFollowers = rWeekly.length ? rWeekly[rWeekly.length - 1].followers : 0
+  const rFirstFollowers = rWeekly.length ? rWeekly[0].followers : 0
   const rFollowerGrowth = rFirstFollowers ? (((rLatestFollowers - rFirstFollowers) / rFirstFollowers) * 100).toFixed(1) : '0'
   const rFollowerNet = rLatestFollowers - rFirstFollowers
-  const rTotalProfileViews = reportWeekly.reduce((s, d) => s + (d.profile_views || 0), 0)
-  const postsWithMetrics = reportPosts.filter(p => p.post_metrics?.length > 0).map(p => ({ ...p, m: p.post_metrics[0] })).sort((a, b) => (b.m.impressions || 0) - (a.m.impressions || 0))
-  const typeCount = {}; reportPosts.forEach(p => { typeCount[p.content_type || 'Text'] = (typeCount[p.content_type || 'Text'] || 0) + 1 })
-  const typeTotal = reportPosts.length || 1
+  const rTotalPV = rWeekly.reduce((s, d) => s + (d.profile_views || 0), 0)
+  const postsWithMetrics = rPosts.filter(p => p.post_metrics?.length > 0).map(p => ({ ...p, m: p.post_metrics[0] })).sort((a, b) => (b.m.impressions || 0) - (a.m.impressions || 0))
+  const typeCount = {}; rPosts.forEach(p => { typeCount[p.content_type || 'Text'] = (typeCount[p.content_type || 'Text'] || 0) + 1 })
+  const periodLabel = rd.type === 'weekly' ? `Week of ${new Date((rd.startDate || '')+'T00:00:00').toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})}` : new Date((rd.startDate || '')+'T00:00:00').toLocaleDateString('en-AU',{month:'long',year:'numeric'})
 
   return (
     <div className="fade-in">
-      <PageHeader title="Reports" subtitle="Build and generate client performance reports" />
-      <Sel label="Select Client" value={selClient} onChange={v => { setSelClient(v); setPostedPosts([]) }}
-        options={[{ value: '', label: 'Choose a client...' }, ...clients.map(c => ({ value: c.id, label: `${c.full_name} — ${c.company || ''}` }))]} />
+      <PageHeader title="Reports" subtitle="Weekly data entry and report generation" />
+      <Sel label="Select Client" value={selClient} onChange={v => setSelClient(v)} options={[{ value: '', label: 'Choose a client...' }, ...clients.map(c => ({ value: c.id, label: `${c.full_name} — ${c.company || ''}` }))]} />
 
       {selClient && (<>
-        {/* Workflow guide */}
-        <div style={{ padding: '12px 16px', background: C.g50, borderRadius: 8, marginBottom: 16, fontSize: 13, color: C.g500, lineHeight: 1.6, border: `1px solid ${C.g200}` }}>
-          <strong style={{ color: C.g700 }}>Workflow:</strong> Step 1 — upload CSV or add weekly account numbers. Step 2 — enter per-post metrics for posted content. Step 3 — generate the report with AI recommendations.
-        </div>
-
         <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `2px solid ${C.g200}` }}>
-          {[{ id: 'weekly', label: '1. Weekly Data' }, { id: 'posts', label: '2. Post Metrics' }, { id: 'generate', label: '3. Generate Report' }].map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: '10px 20px', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-              background: tab === t.id ? C.white : 'transparent', color: tab === t.id ? C.navy : C.g400,
-              borderBottom: tab === t.id ? `3px solid ${C.blue}` : '3px solid transparent', marginBottom: -2 }}>{t.label}</button>
-          ))}
+          {[{ id: 'entry', label: 'Weekly Data Entry' }, { id: 'generate', label: 'Generate Report' }].map(t => (
+            <button key={t.id} onClick={() => setMode(t.id)} style={{ padding: '10px 20px', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: mode === t.id ? C.white : 'transparent', color: mode === t.id ? C.navy : C.g400, borderBottom: mode === t.id ? `3px solid ${C.blue}` : '3px solid transparent', marginBottom: -2 }}>{t.label}</button>))}
         </div>
 
-        {tab === 'weekly' && (<>
-          <CSVImport clientId={selClient} onImported={refresh} />
-          <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}><Btn onClick={() => setShowAdd(true)}>+ Add Manually</Btn></div>
-          {loading ? <Loader /> : reportData.length === 0 ? <EmptyState icon="▤" title="No data yet" sub="Add weekly LinkedIn metrics" /> : (
-            <Card style={{ overflow: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead><tr style={{ background: C.navy, color: C.white }}>
-                {['Week', 'Impressions', 'Likes', 'Comments', 'Shares', 'Profile Views', 'Followers', 'Search'].map(h => (
-                  <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>{h}</th>))}
-              </tr></thead>
-              <tbody>{reportData.map((d, i) => (
-                <tr key={d.id} style={{ background: i % 2 ? C.g50 : C.white }}>
-                  <td style={{ padding: '10px 14px', fontWeight: 600 }}>{d.week_label}</td>
-                  <td style={{ padding: '10px 14px' }}>{d.impressions?.toLocaleString()}</td>
-                  <td style={{ padding: '10px 14px' }}>{d.likes?.toLocaleString()}</td>
-                  <td style={{ padding: '10px 14px' }}>{d.comments?.toLocaleString()}</td>
-                  <td style={{ padding: '10px 14px' }}>{d.shares?.toLocaleString()}</td>
-                  <td style={{ padding: '10px 14px' }}>{d.profile_views?.toLocaleString()}</td>
-                  <td style={{ padding: '10px 14px' }}>{d.followers?.toLocaleString()}</td>
-                  <td style={{ padding: '10px 14px' }}>{d.search_appearances?.toLocaleString()}</td>
-                </tr>))}</tbody>
-            </table></Card>)}
-        </>)}
+        {mode === 'entry' && (<>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+            <Btn v="secondary" sz="sm" onClick={prevWeek}>←</Btn>
+            <div style={{ flex: 1, textAlign: 'center' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: C.navy }}>{weekLabel}</div>
+              <input type="date" value={selWeek} onChange={e => setSelWeek(e.target.value)} style={{ marginTop: 4, fontSize: 12, color: C.g500, border: 'none', background: 'transparent', textAlign: 'center', cursor: 'pointer', fontFamily: 'inherit' }} />
+            </div>
+            <Btn v="secondary" sz="sm" onClick={nextWeek}>→</Btn>
+          </div>
 
-        {tab === 'posts' && (<>
-          <Card style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: C.g700, marginBottom: 12 }}>Select date range to load posted content</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 12, alignItems: 'end' }}>
-              <Field label="From" value={dateFrom} onChange={setDateFrom} type="date" style={{ marginBottom: 0 }} />
-              <Field label="To" value={dateTo} onChange={setDateTo} type="date" style={{ marginBottom: 0 }} />
-              <Btn onClick={fetchPostedPosts} disabled={!dateFrom || !dateTo} style={{ marginBottom: 16 }}>Load Posts</Btn>
-            </div>
-          </Card>
-          {loadingPosts ? <Loader /> : postedPosts.length === 0 ? (
-            <EmptyState icon="✎" title={dateFrom ? 'No posted content in this range' : 'Select a date range'} sub="Only posts marked as Posted with a posted date will appear" />
-          ) : (<>
-            <div style={{ fontSize: 13, color: C.g500, marginBottom: 12 }}>{postedPosts.length} posted posts. Enter current lifetime metrics, then save.</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
-              {postedPosts.map(p => { const m = postMetrics[p.id] || {}; const hasM = p.post_metrics?.length > 0; return (
-                <Card key={p.id} style={{ padding: 16 }}>
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-                      <span style={{ fontSize: 12, color: C.g400 }}>{p.posted_date && new Date(p.posted_date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                      <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.g100, color: C.g600 }}>{p.content_type}</span>
-                      {hasM && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.greenLight, color: C.green }}>Saved</span>}
-                    </div>
-                    <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.content}</div>
+          {loadingWeek ? <Loader /> : (<>
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <div>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>Account Metrics</h3>
+                  <div style={{ fontSize: 12, color: weekData ? C.green : C.g400 }}>{weekData ? '✓ Data saved for this week' : 'No data yet — enter numbers or upload CSV'}</div>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                {[{ key: 'impressions', label: 'Impressions' },{ key: 'likes', label: 'Likes' },{ key: 'comments', label: 'Comments' },{ key: 'shares', label: 'Shares' },{ key: 'profile_views', label: 'Profile Views' },{ key: 'followers', label: 'Followers' },{ key: 'search_appearances', label: 'Search App.' }].map(f => (
+                  <div key={f.key}>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: C.g500 }}>{f.label}</label>
+                    <input type="number" value={weekForm[f.key]} onChange={e => updateWeekForm(f.key, e.target.value)} placeholder="0"
+                      style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: `1px solid ${weekForm[f.key] ? C.blue : C.g300}`, fontSize: 14, fontFamily: 'inherit', fontWeight: 600 }} />
+                  </div>))}
+              </div>
+            </Card>
+
+            <Card style={{ marginBottom: 16 }}>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 4 }}>Posts This Week</h3>
+              <div style={{ fontSize: 12, color: C.g400, marginBottom: 14 }}>{weekPosts.length === 0 ? 'No posts posted this week. Mark posts as Posted with a date in Content Pipeline first.' : `${weekPosts.length} post${weekPosts.length !== 1 ? 's' : ''} — enter lifetime metrics from LinkedIn.`}</div>
+              {weekPosts.map(p => { const m = postMetrics[p.id] || {}; const hasM = p.post_metrics?.length > 0; return (
+                <div key={p.id} style={{ padding: 14, marginBottom: 10, borderRadius: 10, background: C.g50, border: `1px solid ${C.g200}` }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, color: C.g400 }}>{p.posted_date && new Date(p.posted_date+'T00:00:00').toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short'})}</span>
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.blueLight, color: C.blue }}>{p.content_type}</span>
+                    {hasM && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.greenLight, color: C.green }}>Saved</span>}
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-                    {metricFields.map(f => (<div key={f}>
-                      <label style={{ fontSize: 11, fontWeight: 600, color: C.g500, textTransform: 'capitalize' }}>{f.replace('_', ' ')}</label>
-                      <input type="number" value={m[f] || ''} onChange={e => updatePostMetric(p.id, f, e.target.value)} placeholder="0"
-                        style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit' }} />
-                    </div>))}
+                  <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.5, marginBottom: 10, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.content}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                    {metricFields.map(f => (<div key={f}><label style={{ fontSize: 10, fontWeight: 600, color: C.g500, textTransform: 'capitalize' }}>{f.replace('_',' ')}</label>
+                      <input type="number" value={m[f] || ''} onChange={e => updatePostMetric(p.id, f, e.target.value)} placeholder="0" style={{ width: '100%', padding: '5px 8px', borderRadius: 4, border: `1px solid ${C.g300}`, fontSize: 12, fontFamily: 'inherit' }} /></div>))}
                   </div>
-                  <div style={{ marginTop: 8 }}><label style={{ fontSize: 11, fontWeight: 600, color: C.g500 }}>Notes</label>
-                    <input value={m.notes || ''} onChange={e => updatePostMetric(p.id, 'notes', e.target.value)} placeholder="e.g. Went viral, reshared by..."
-                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.g300}`, fontSize: 13, fontFamily: 'inherit' }} />
-                  </div>
-                </Card>)})}
-            </div>
+                </div>)})}
+            </Card>
+
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <Btn v="success" sz="lg" onClick={saveAllPostMetrics} disabled={saving}>{saving ? 'Saving...' : 'Save All Post Metrics'}</Btn>
+              <Btn v="success" sz="lg" onClick={saveWeekData} disabled={saving}>{saving ? 'Saving...' : 'Save All Data for This Week'}</Btn>
             </div>
           </>)}
         </>)}
 
-        {tab === 'generate' && (<>
-          <Card style={{ marginBottom: 20 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 4 }}>Generate Client Report</h3>
-            <div style={{ fontSize: 13, color: C.g500, marginBottom: 16 }}>Select reporting period. Pulls weekly data AND per-post metrics for this range.</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 12, alignItems: 'end' }}>
-              <Field label="Period Start" value={reportFrom} onChange={setReportFrom} type="date" style={{ marginBottom: 0 }} />
-              <Field label="Period End" value={reportTo} onChange={setReportTo} type="date" style={{ marginBottom: 0 }} />
-              <Btn v="orange" sz="lg" onClick={generateReport} disabled={!reportFrom || !reportTo || loadingReport} style={{ marginBottom: 16 }}>
-                {loadingReport ? 'Loading...' : 'Generate Report'}</Btn>
+        {mode === 'generate' && (
+          <Card>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 16 }}>Generate Report</h3>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+              <Btn v={reportType === 'weekly' ? 'primary' : 'secondary'} sz="sm" onClick={() => setReportType('weekly')}>Weekly</Btn>
+              <Btn v={reportType === 'monthly' ? 'primary' : 'secondary'} sz="sm" onClick={() => setReportType('monthly')}>Monthly</Btn>
             </div>
+            {reportType === 'weekly' ? (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 13, color: C.g500, marginBottom: 8 }}>Select the week. Shows that week's account data + posts.</div>
+                <input type="date" value={reportWeek || selWeek} onChange={e => setReportWeek(e.target.value)} style={{ padding: '10px 14px', borderRadius: 8, border: `1px solid ${C.g300}`, fontSize: 14, fontFamily: 'inherit' }} />
+              </div>
+            ) : (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 13, color: C.g500, marginBottom: 8 }}>Select month. Aggregates all weeks + AI recommendations + content calendar.</div>
+                <input type="month" value={reportMonth} onChange={e => setReportMonth(e.target.value)} style={{ padding: '10px 14px', borderRadius: 8, border: `1px solid ${C.g300}`, fontSize: 14, fontFamily: 'inherit' }} />
+              </div>
+            )}
+            <Btn v="orange" sz="lg" onClick={generateReport} disabled={loadingReport}>{loadingReport ? 'Generating...' : `Generate ${reportType === 'weekly' ? 'Weekly' : 'Monthly'} Report`}</Btn>
           </Card>
-          <Card style={{ background: C.g50, border: `1px dashed ${C.g300}` }}>
-            <div style={{ fontSize: 13, color: C.g500, lineHeight: 1.7 }}>
-              <strong style={{ color: C.g700 }}>The report will include:</strong><br />
-              — Cover page with client branding and reporting period<br />
-              — Executive summary with 6 KPI cards<br />
-              — Weekly performance trends with visual bars and data table<br />
-              — Per-post performance ranking by impressions<br />
-              — Content type distribution<br />
-              — Confidential footer with DPT branding
-            </div>
-          </Card>
-        </>)}
+        )}
       </>)}
 
-      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Add Weekly Data" width={600}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <Field label="Week Label" value={wLabel} onChange={setWLabel} placeholder="e.g. Mar 10-16" />
-          <Field label="Week Start Date" value={wStart} onChange={setWStart} type="date" />
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-          <Field label="Impressions" value={wImpressions} onChange={setWImpressions} type="number" placeholder="0" />
-          <Field label="Likes" value={wLikes} onChange={setWLikes} type="number" placeholder="0" />
-          <Field label="Comments" value={wComments} onChange={setWComments} type="number" placeholder="0" />
-          <Field label="Shares" value={wShares} onChange={setWShares} type="number" placeholder="0" />
-          <Field label="Profile Views" value={wProfileViews} onChange={setWProfileViews} type="number" placeholder="0" />
-          <Field label="Followers" value={wFollowers} onChange={setWFollowers} type="number" placeholder="0" />
-          <Field label="Search Appearances" value={wSearch} onChange={setWSearch} type="number" placeholder="0" />
-        </div>
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
-          <Btn v="secondary" onClick={() => setShowAdd(false)}>Cancel</Btn>
-          <Btn onClick={handleSaveWeekly} disabled={!wStart || saving}>{saving ? 'Saving...' : 'Save Data'}</Btn>
-        </div>
-      </Modal>
-
-      <Modal open={showReport} onClose={() => setShowReport(false)} title="Performance Report" width={780}>
-        <div id="report-print" style={{ fontFamily: "'DM Sans', sans-serif" }}>
-          <div style={{ background: `linear-gradient(135deg, ${C.navy} 0%, #1a2744 100%)`, color: C.white, padding: '48px 40px', borderRadius: 14, marginBottom: 28 }}>
-            <div style={{ fontSize: 11, letterSpacing: 5, textTransform: 'uppercase', color: C.g400, marginBottom: 12 }}>DPT Agency — Confidential</div>
-            <div style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, marginBottom: 6 }}>LinkedIn Performance Report</div>
-            <div style={{ fontSize: 16, color: C.g300, marginBottom: 20 }}>{client?.full_name} — {client?.company}</div>
-            <div style={{ display: 'flex', gap: 24, fontSize: 13, color: C.g400 }}>
-              <span>Niche: {client?.niche || 'General'}</span>
-              <span>Period: {reportFrom && new Date(reportFrom+'T00:00:00').toLocaleDateString('en-AU',{month:'short',day:'numeric'})} — {reportTo && new Date(reportTo+'T00:00:00').toLocaleDateString('en-AU',{month:'short',day:'numeric',year:'numeric'})}</span>
-              <span>Generated: {new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'})}</span>
-            </div>
+      {/* ════════ REPORT MODAL ════════ */}
+      <Modal open={showReport} onClose={() => setShowReport(false)} title={`${rd.type === 'weekly' ? 'Weekly' : 'Monthly'} Report`} width={780}>
+        <div style={{ fontFamily: "'DM Sans', sans-serif" }}>
+          <div style={{ background: `linear-gradient(135deg, ${C.navy} 0%, #1a2744 100%)`, color: C.white, padding: '40px 36px', borderRadius: 14, marginBottom: 24 }}>
+            <div style={{ fontSize: 11, letterSpacing: 5, textTransform: 'uppercase', color: C.g400, marginBottom: 10 }}>DPT Agency — {rd.type === 'weekly' ? 'Weekly Snapshot' : 'Monthly Report'}</div>
+            <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: -1, marginBottom: 6 }}>LinkedIn Performance</div>
+            <div style={{ fontSize: 16, color: C.g300, marginBottom: 16 }}>{client?.full_name} — {client?.company}</div>
+            <div style={{ display: 'flex', gap: 20, fontSize: 13, color: C.g400 }}><span>{periodLabel}</span><span>{client?.niche}</span></div>
           </div>
 
-          <div style={{ marginBottom: 28 }}>
-            <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid ${C.orange}` }}>Executive Summary</h3>
+          <div style={{ marginBottom: 24 }}>
+            <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 14, paddingBottom: 8, borderBottom: `3px solid ${C.orange}` }}>{rd.type === 'weekly' ? 'Week at a Glance' : 'Executive Summary'}</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-              {[
-                { label: 'Current Followers', value: rLatestFollowers.toLocaleString(), sub: rFollowerNet>=0?`+${rFollowerNet.toLocaleString()} (+${rFollowerGrowth}%)`:`${rFollowerNet.toLocaleString()} (${rFollowerGrowth}%)`, color: C.blue },
-                { label: 'Total Impressions', value: rTotalImps.toLocaleString(), sub: `Across ${reportWeekly.length} week${reportWeekly.length!==1?'s':''}`, color: C.orange },
-                { label: 'Total Engagements', value: rTotalEng.toLocaleString(), sub: 'Likes + Comments + Shares', color: C.green },
-                { label: 'Avg Engagement Rate', value: `${rAvgEngRate}%`, sub: 'Engagements / Impressions', color: C.navy },
-                { label: 'Profile Views', value: rTotalProfileViews.toLocaleString(), sub: 'Total in period', color: '#8B5CF6' },
-                { label: 'Posts Published', value: reportPosts.length.toString(), sub: `${postsWithMetrics.length} with metrics`, color: C.g700 },
-              ].map((k,i) => (
-                <div key={i} style={{ padding: 16, borderRadius: 10, border: `1px solid ${C.g200}` }}>
-                  <div style={{ fontSize: 26, fontWeight: 800, color: k.color, letterSpacing: -1 }}>{k.value}</div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: C.g600, marginTop: 2 }}>{k.label}</div>
-                  <div style={{ fontSize: 11, color: C.g400, marginTop: 2 }}>{k.sub}</div>
-                </div>))}
+              {[{ label: 'Followers', value: rLatestFollowers.toLocaleString(), sub: rWeekly.length > 1 ? `${rFollowerNet>=0?'+':''}${rFollowerNet} (${rFollowerGrowth}%)` : 'This period', color: C.blue },
+                { label: 'Impressions', value: rTotalImps.toLocaleString(), sub: `${rWeekly.length} week${rWeekly.length!==1?'s':''}`, color: C.orange },
+                { label: 'Engagements', value: rTotalEng.toLocaleString(), sub: 'Likes+Comments+Shares', color: C.green },
+                { label: 'Eng Rate', value: `${rAvgEngRate}%`, sub: parseFloat(rAvgEngRate)>=3?'Above benchmark':'Benchmark: 2-3%', color: C.navy },
+                { label: 'Profile Views', value: rTotalPV.toLocaleString(), color: '#8B5CF6', sub: 'Total' },
+                { label: 'Posts', value: rPosts.length.toString(), sub: `${postsWithMetrics.length} tracked`, color: C.g700 },
+              ].map((k,i) => (<div key={i} style={{ padding: 14, borderRadius: 10, border: `1px solid ${C.g200}` }}>
+                <div style={{ fontSize: 24, fontWeight: 800, color: k.color, letterSpacing: -1 }}>{k.value}</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.g600, marginTop: 2 }}>{k.label}</div>
+                <div style={{ fontSize: 11, color: C.g400, marginTop: 2 }}>{k.sub}</div>
+              </div>))}
             </div>
           </div>
 
-          {reportWeekly.length > 0 && (<div style={{ marginBottom: 28 }}>
-            <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid ${C.blue}` }}>Weekly Performance</h3>
-            <div style={{ marginBottom: 16 }}>
-              {reportWeekly.map((d,i) => { const maxImp=Math.max(...reportWeekly.map(r=>r.impressions||0)); const pct=maxImp?((d.impressions||0)/maxImp)*100:0; const eng=(d.likes||0)+(d.comments||0)+(d.shares||0); const engR=d.impressions?((eng/d.impressions)*100).toFixed(1):'0'; return (
-                <div key={i} style={{ display:'flex', alignItems:'center', gap:12, marginBottom:10 }}>
-                  <div style={{ width:110, fontSize:12, color:C.g500, flexShrink:0, fontWeight:600 }}>{d.week_label}</div>
-                  <div style={{ flex:1, height:28, background:C.g100, borderRadius:6, overflow:'hidden', position:'relative' }}>
-                    <div style={{ width:`${pct}%`, height:'100%', background:`linear-gradient(90deg, ${C.blue}, ${C.orange})`, borderRadius:6 }} />
-                    <div style={{ position:'absolute', right:8, top:'50%', transform:'translateY(-50%)', fontSize:11, fontWeight:600, color:pct>60?C.white:C.g600 }}>{(d.impressions||0).toLocaleString()} impr · {engR}% eng</div>
-                  </div>
-                </div>)})}
-            </div>
-            <div style={{ overflow:'auto', borderRadius:10, border:`1px solid ${C.g200}` }}>
-              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
-                <thead><tr style={{ background:C.navy, color:C.white }}>
-                  {['Week','Impressions','Likes','Comments','Shares','Profile Views','Followers'].map(h=>(
-                    <th key={h} style={{ padding:'9px 12px', textAlign:'left', fontWeight:600 }}>{h}</th>))}
-                </tr></thead>
-                <tbody>{reportWeekly.map((d,i)=>(
-                  <tr key={i} style={{ background:i%2?C.g50:C.white }}>
-                    <td style={{ padding:'8px 12px', fontWeight:600 }}>{d.week_label}</td>
-                    <td style={{ padding:'8px 12px' }}>{(d.impressions||0).toLocaleString()}</td>
-                    <td style={{ padding:'8px 12px' }}>{(d.likes||0).toLocaleString()}</td>
-                    <td style={{ padding:'8px 12px' }}>{(d.comments||0).toLocaleString()}</td>
-                    <td style={{ padding:'8px 12px' }}>{(d.shares||0).toLocaleString()}</td>
-                    <td style={{ padding:'8px 12px' }}>{(d.profile_views||0).toLocaleString()}</td>
-                    <td style={{ padding:'8px 12px' }}>{(d.followers||0).toLocaleString()}</td>
-                  </tr>))}</tbody>
-              </table>
+          {rd.type === 'monthly' && rWeekly.length > 1 && (<div style={{ marginBottom: 24 }}>
+            <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 14, paddingBottom: 8, borderBottom: `3px solid ${C.blue}` }}>Week-over-Week</h3>
+            {rWeekly.map((d,i) => { const mx = Math.max(...rWeekly.map(r=>r.impressions||0)); const pct = mx ? ((d.impressions||0)/mx)*100 : 0; const eng=(d.likes||0)+(d.comments||0)+(d.shares||0); const er = d.impressions?((eng/d.impressions)*100).toFixed(1):'0'; return (
+              <div key={i} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
+                <div style={{ width:100, fontSize:11, color:C.g500, fontWeight:600 }}>{d.week_label}</div>
+                <div style={{ flex:1, height:26, background:C.g100, borderRadius:6, overflow:'hidden', position:'relative' }}>
+                  <div style={{ width:`${pct}%`, height:'100%', background:`linear-gradient(90deg, ${C.blue}, ${C.orange})`, borderRadius:6 }} />
+                  <span style={{ position:'absolute', right:8, top:'50%', transform:'translateY(-50%)', fontSize:11, fontWeight:600, color:pct>50?C.white:C.g600 }}>{(d.impressions||0).toLocaleString()} · {er}%</span>
+                </div>
+              </div>)})}
+            <div style={{ display:'flex', justifyContent:'space-between', marginTop:10, padding:'8px 14px', background:C.g50, borderRadius:8, fontSize:13 }}>
+              <span style={{ color:C.g500 }}>Followers: <strong style={{ color:C.navy }}>{rFirstFollowers.toLocaleString()}</strong> → <strong style={{ color:C.navy }}>{rLatestFollowers.toLocaleString()}</strong></span>
+              <span style={{ color:rFollowerNet>=0?C.green:C.red, fontWeight:600 }}>{rFollowerNet>=0?'+':''}{rFollowerNet.toLocaleString()} ({rFollowerGrowth}%)</span>
             </div>
           </div>)}
 
-          {reportPosts.length > 0 && (<div style={{ marginBottom: 28 }}>
-            <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid ${C.green}` }}>Content Mix</h3>
-            <div style={{ display: 'flex', gap: 12 }}>
-              {Object.entries(typeCount).sort((a,b)=>b[1]-a[1]).map(([type,count],i) => {
-                const cols=[C.blue,C.orange,C.green,'#8B5CF6',C.yellow,C.red]; return (
-                <div key={type} style={{ flex:1, padding:16, borderRadius:10, border:`1px solid ${C.g200}`, textAlign:'center' }}>
-                  <div style={{ fontSize:28, fontWeight:800, color:cols[i%cols.length] }}>{count}</div>
-                  <div style={{ fontSize:12, color:C.g600, fontWeight:600 }}>{type}</div>
-                  <div style={{ fontSize:11, color:C.g400 }}>{((count/typeTotal)*100).toFixed(0)}% of posts</div>
-                </div>)})}
-            </div>
+          {postsWithMetrics.length > 0 && (<div style={{ marginBottom: 24 }}>
+            <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 14, paddingBottom: 8, borderBottom: `3px solid ${C.green}` }}>Post Performance</h3>
+            {postsWithMetrics.map((p,i) => { const m=p.m; const tE=(m.likes||0)+(m.comments||0)+(m.shares||0)+(m.reposts||0); const er=m.impressions?((tE/m.impressions)*100).toFixed(1):'0'; const top=i===0; return (
+              <div key={p.id} style={{ padding:14, marginBottom:8, borderRadius:10, border:`1px solid ${top?C.green:C.g200}`, background:top?C.greenLight:C.white }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                    <span style={{ width:24, height:24, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:800, color:C.white, background:top?C.green:C.g400 }}>{i+1}</span>
+                    <span style={{ fontSize:12, color:C.g400 }}>{p.posted_date&&new Date(p.posted_date+'T00:00:00').toLocaleDateString('en-AU',{weekday:'short',month:'short',day:'numeric'})}</span>
+                    <span style={{ fontSize:11, padding:'2px 8px', borderRadius:4, background:C.g100, color:C.g600 }}>{p.content_type}</span>
+                    {top&&<span style={{ fontSize:11, padding:'2px 8px', borderRadius:4, background:C.green, color:C.white, fontWeight:600 }}>Top</span>}
+                  </div>
+                  <span style={{ fontSize:13, fontWeight:700, color:C.navy }}>{er}% eng</span>
+                </div>
+                <div style={{ fontSize:13, color:C.g700, lineHeight:1.5, marginBottom:8, display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden' }}>{p.content}</div>
+                <div style={{ display:'flex', gap:14, fontSize:12, color:C.g500 }}><span style={{ fontWeight:600, color:C.navy }}>{(m.impressions||0).toLocaleString()} impr</span><span>{m.likes||0} likes</span><span>{m.comments||0} cmts</span><span>{m.shares||0} shares</span>{m.clicks>0&&<span>{m.clicks} clicks</span>}{m.saves>0&&<span>{m.saves} saves</span>}</div>
+              </div>)})}
           </div>)}
 
-          {postsWithMetrics.length > 0 && (<div style={{ marginBottom: 28 }}>
-            <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid ${C.yellow}` }}>Post Performance Ranking</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {postsWithMetrics.map((p,i) => { const m=p.m; const tEng=(m.likes||0)+(m.comments||0)+(m.shares||0)+(m.reposts||0); const engR=m.impressions?((tEng/m.impressions)*100).toFixed(1):'0'; const isTop=i===0; return (
-                <div key={p.id} style={{ padding:16, borderRadius:10, border:`1px solid ${isTop?C.green:C.g200}`, background:isTop?C.greenLight:C.white }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-                    <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                      <span style={{ width:28, height:28, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:800, color:C.white, background:isTop?C.green:C.g400 }}>{i+1}</span>
-                      <span style={{ fontSize:12, color:C.g400 }}>{p.posted_date && new Date(p.posted_date+'T00:00:00').toLocaleDateString('en-AU',{weekday:'short',month:'short',day:'numeric'})}</span>
-                      <span style={{ fontSize:11, padding:'2px 8px', borderRadius:4, background:C.g100, color:C.g600 }}>{p.content_type}</span>
-                      {isTop && <span style={{ fontSize:11, padding:'2px 8px', borderRadius:4, background:C.green, color:C.white, fontWeight:600 }}>Best Performer</span>}
-                    </div>
-                    <span style={{ fontSize:14, fontWeight:700, color:C.navy }}>{engR}% eng rate</span>
-                  </div>
-                  <div style={{ fontSize:13, color:C.g700, lineHeight:1.5, marginBottom:10, display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden' }}>{p.content}</div>
-                  <div style={{ display:'flex', gap:16, fontSize:12, color:C.g500, flexWrap:'wrap' }}>
-                    <span style={{ fontWeight:600, color:C.navy }}>{(m.impressions||0).toLocaleString()} impressions</span>
-                    <span>{m.likes||0} likes</span><span>{m.comments||0} comments</span><span>{m.shares||0} shares</span>
-                    {m.reposts>0&&<span>{m.reposts} reposts</span>}{m.clicks>0&&<span>{m.clicks} clicks</span>}{m.saves>0&&<span>{m.saves} saves</span>}
-                  </div>
-                  {m.notes&&<div style={{ fontSize:12, color:C.blue, marginTop:6, fontStyle:'italic' }}>Note: {m.notes}</div>}
-                </div>)})}
-            </div>
+          {rPosts.length > 0 && Object.keys(typeCount).length > 0 && (<div style={{ marginBottom:24 }}>
+            <h3 style={{ fontSize:16, fontWeight:700, color:C.navy, marginBottom:12 }}>Content Mix</h3>
+            <div style={{ display:'flex', gap:10 }}>{Object.entries(typeCount).sort((a,b)=>b[1]-a[1]).map(([t,c],i) => {
+              const cols=[C.blue,C.orange,C.green,'#8B5CF6']; return (<div key={t} style={{ flex:1, padding:12, borderRadius:8, border:`1px solid ${C.g200}`, textAlign:'center' }}>
+                <div style={{ fontSize:22, fontWeight:800, color:cols[i%cols.length] }}>{c}</div>
+                <div style={{ fontSize:11, color:C.g600, fontWeight:600 }}>{t}</div>
+              </div>)})}</div>
           </div>)}
 
-          {reportWeekly.length===0 && reportPosts.length===0 && <EmptyState icon="▤" title="No data for this period" sub="Enter weekly data and mark posts as posted with dates in this range" />}
-
-          {/* FOLLOWER GROWTH */}
-          {reportWeekly.length > 1 && (
-            <div style={{ marginBottom: 28 }}>
-              <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid ${C.blue}` }}>Follower Growth</h3>
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 140, padding: '0 4px' }}>
-                {reportWeekly.map((d, i) => {
-                  const max = Math.max(...reportWeekly.map(r => r.followers || 0))
-                  const min = Math.min(...reportWeekly.filter(r => r.followers > 0).map(r => r.followers))
-                  const range = max - min || 1
-                  const h = ((d.followers - min) / range) * 110 + 15
-                  return (
-                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: C.navy }}>{(d.followers || 0).toLocaleString()}</span>
-                      <div style={{ width: '100%', height: h, background: `linear-gradient(180deg, ${C.blue}, rgba(45,127,249,0.2))`, borderRadius: '6px 6px 0 0' }} />
-                      <span style={{ fontSize: 10, color: C.g400, textAlign: 'center', lineHeight: 1.2 }}>{d.week_label}</span>
-                    </div>
-                  )
-                })}
+          {rd.type === 'monthly' && loadingRecs && <div style={{ padding:24, textAlign:'center' }}><Loader /><div style={{ fontSize:13, color:C.g500, marginTop:8 }}>Generating AI recommendations...</div></div>}
+          {rd.type === 'monthly' && aiRecs && (<>
+            <div style={{ marginBottom:24 }}>
+              <h3 style={{ fontSize:18, fontWeight:800, color:C.navy, marginBottom:14, paddingBottom:8, borderBottom:`3px solid #8B5CF6` }}>Recommendations</h3>
+              {aiRecs.key_insight && <div style={{ padding:14, background:C.navy, borderRadius:10, marginBottom:14, color:C.white }}><div style={{ fontSize:10, textTransform:'uppercase', letterSpacing:2, color:C.g400, marginBottom:4 }}>Key Insight</div><div style={{ fontSize:14, fontWeight:600, lineHeight:1.5 }}>{aiRecs.key_insight}</div></div>}
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
+                <Card style={{ background:C.greenLight, border:`1px solid ${C.green}33` }}><h4 style={{ fontSize:13, fontWeight:700, color:C.green, marginBottom:8 }}>What's Working</h4>{(aiRecs.whats_working||[]).map((s,i)=><div key={i} style={{ fontSize:12, color:C.g700, marginBottom:6, lineHeight:1.5 }}>✓ {s}</div>)}</Card>
+                <Card style={{ background:C.redLight, border:`1px solid ${C.red}33` }}><h4 style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:8 }}>Stop Doing</h4>{(aiRecs.stop_doing||[]).map((s,i)=><div key={i} style={{ fontSize:12, color:C.g700, marginBottom:6, lineHeight:1.5 }}>✕ {s}</div>)}</Card>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12, padding: '10px 14px', background: C.g50, borderRadius: 8, fontSize: 13 }}>
-                <span style={{ color: C.g500 }}>Start: <strong style={{ color: C.navy }}>{rFirstFollowers.toLocaleString()}</strong></span>
-                <span style={{ color: C.g500 }}>End: <strong style={{ color: C.navy }}>{rLatestFollowers.toLocaleString()}</strong></span>
-                <span style={{ color: rFollowerNet >= 0 ? C.green : C.red, fontWeight: 600 }}>{rFollowerNet >= 0 ? '+' : ''}{rFollowerNet.toLocaleString()} ({rFollowerGrowth}%)</span>
-              </div>
+              {aiRecs.growth_prediction && <div style={{ padding:10, background:C.blueLight, borderRadius:8, marginBottom:14, fontSize:13, color:C.navy }}>📈 {aiRecs.growth_prediction}</div>}
             </div>
-          )}
+            {aiRecs.next_period_calendar && <div style={{ marginBottom:24 }}>
+              <h3 style={{ fontSize:16, fontWeight:700, color:C.navy, marginBottom:12 }}>Next Month's Calendar</h3>
+              {aiRecs.next_period_calendar.map((d,i) => (<div key={i} style={{ display:'flex', gap:12, padding:12, marginBottom:6, borderRadius:8, background:C.g50, border:`1px solid ${C.g200}` }}>
+                <div style={{ width:70, fontSize:13, fontWeight:700, color:C.navy }}>{d.day}</div>
+                <span style={{ fontSize:11, padding:'2px 8px', borderRadius:4, background:C.blueLight, color:C.blue }}>{d.type}</span>
+                <div style={{ flex:1 }}><div style={{ fontSize:13, fontWeight:600, color:C.g700 }}>{d.theme}</div><div style={{ fontSize:12, color:C.g500, fontStyle:'italic' }}>"{d.hook_suggestion}"</div></div>
+              </div>))}
+            </div>}
+          </>)}
 
-          {/* ENGAGEMENT RATE TREND */}
-          {reportWeekly.length > 1 && (
-            <div style={{ marginBottom: 28 }}>
-              <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid #8B5CF6` }}>Engagement Rate Trend</h3>
-              {(() => {
-                const rates = reportWeekly.map(d => {
-                  const eng = (d.likes || 0) + (d.comments || 0) + (d.shares || 0)
-                  return { week: d.week_label, rate: d.impressions ? ((eng / d.impressions) * 100) : 0, impressions: d.impressions || 0, eng }
-                })
-                const maxRate = Math.max(...rates.map(r => r.rate))
-                const avgRate = rates.reduce((s, r) => s + r.rate, 0) / rates.length
-                return (
-                  <div>
-                    <div style={{ marginBottom: 12 }}>
-                      {rates.map((d, i) => (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                          <div style={{ width: 90, fontSize: 11, color: C.g500, flexShrink: 0 }}>{d.week}</div>
-                          <div style={{ flex: 1, height: 24, background: C.g100, borderRadius: 6, overflow: 'hidden', position: 'relative' }}>
-                            <div style={{ width: `${maxRate ? (d.rate / maxRate) * 100 : 0}%`, height: '100%', background: d.rate >= 3 ? C.green : d.rate >= 2 ? '#8B5CF6' : C.orange, borderRadius: 6, transition: 'width 0.3s' }} />
-                            <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 11, fontWeight: 600, color: (d.rate / maxRate) > 0.5 ? C.white : C.g600 }}>{d.rate.toFixed(1)}%</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ display: 'flex', gap: 16, padding: '10px 14px', background: C.g50, borderRadius: 8, fontSize: 13 }}>
-                      <span style={{ color: C.g500 }}>Average: <strong style={{ color: C.navy }}>{avgRate.toFixed(1)}%</strong></span>
-                      <span style={{ color: C.g500 }}>Peak: <strong style={{ color: C.green }}>{maxRate.toFixed(1)}%</strong></span>
-                      <span style={{ color: C.g500 }}>LinkedIn benchmark: <strong style={{ color: C.g600 }}>2-3%</strong></span>
-                    </div>
-                  </div>
-                )
-              })()}
-            </div>
-          )}
-
-          {/* TOP VS BOTTOM POST COMPARISON */}
-          {postsWithMetrics.length >= 2 && (() => {
-            const top = postsWithMetrics[0]
-            const bottom = postsWithMetrics[postsWithMetrics.length - 1]
-            const topEng = (top.m.likes||0)+(top.m.comments||0)+(top.m.shares||0)
-            const botEng = (bottom.m.likes||0)+(bottom.m.comments||0)+(bottom.m.shares||0)
-            const topRate = top.m.impressions ? ((topEng/top.m.impressions)*100).toFixed(1) : '0'
-            const botRate = bottom.m.impressions ? ((botEng/bottom.m.impressions)*100).toFixed(1) : '0'
-            return (
-              <div style={{ marginBottom: 28 }}>
-                <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid ${C.red}` }}>Best vs Lowest Performer</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                  {[{ p: top, label: 'Best', color: C.green, rate: topRate, eng: topEng }, { p: bottom, label: 'Lowest', color: C.red, rate: botRate, eng: botEng }].map((item, i) => (
-                    <div key={i} style={{ padding: 16, borderRadius: 10, border: `2px solid ${item.color}33`, background: i === 0 ? C.greenLight : C.redLight }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: item.color, textTransform: 'uppercase', letterSpacing: 1 }}>{item.label} Performer</span>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{item.rate}% eng</span>
-                      </div>
-                      <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.5, marginBottom: 10, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{item.p.content}</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6, fontSize: 12, color: C.g500 }}>
-                        <span>{(item.p.m.impressions||0).toLocaleString()} impressions</span>
-                        <span>{item.p.m.likes||0} likes</span>
-                        <span>{item.p.m.comments||0} comments</span>
-                        <span>{item.p.m.shares||0} shares</span>
-                      </div>
-                      <div style={{ fontSize: 11, color: C.g400, marginTop: 6 }}>{item.p.posted_date && new Date(item.p.posted_date+'T00:00:00').toLocaleDateString('en-AU',{weekday:'long',month:'short',day:'numeric'})} · {item.p.content_type}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )
-          })()}
-
-          {/* AI STRATEGIC RECOMMENDATIONS */}
-          {loadingRecs && (
-            <div style={{ marginBottom: 28, padding: 24, background: C.g50, borderRadius: 12, textAlign: 'center' }}>
-              <Loader />
-              <div style={{ fontSize: 13, color: C.g500, marginTop: 8 }}>Generating AI recommendations...</div>
-            </div>
-          )}
-
-          {aiRecs && (
-            <>
-              <div style={{ marginBottom: 28 }}>
-                <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid #8B5CF6` }}>Strategic Recommendations</h3>
-
-                {/* Key Insight */}
-                {aiRecs.key_insight && (
-                  <div style={{ padding: 16, background: `linear-gradient(135deg, ${C.navy}, #1a2744)`, borderRadius: 10, marginBottom: 16, color: C.white }}>
-                    <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 2, color: C.g400, marginBottom: 6 }}>Key Insight</div>
-                    <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.5 }}>{aiRecs.key_insight}</div>
-                  </div>
-                )}
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
-                  {/* What's Working */}
-                  <Card style={{ background: C.greenLight, border: `1px solid ${C.green}33` }}>
-                    <h4 style={{ fontSize: 14, fontWeight: 700, color: C.green, marginBottom: 10 }}>What's Working</h4>
-                    {(aiRecs.whats_working || []).map((s, i) => (
-                      <div key={i} style={{ fontSize: 13, color: C.g700, marginBottom: 8, display: 'flex', gap: 8, lineHeight: 1.5 }}>
-                        <span style={{ color: C.green, flexShrink: 0 }}>✓</span> {s}
-                      </div>
-                    ))}
-                  </Card>
-
-                  {/* Stop Doing */}
-                  <Card style={{ background: C.redLight, border: `1px solid ${C.red}33` }}>
-                    <h4 style={{ fontSize: 14, fontWeight: 700, color: C.red, marginBottom: 10 }}>Consider Stopping</h4>
-                    {(aiRecs.stop_doing || []).map((s, i) => (
-                      <div key={i} style={{ fontSize: 13, color: C.g700, marginBottom: 8, display: 'flex', gap: 8, lineHeight: 1.5 }}>
-                        <span style={{ color: C.red, flexShrink: 0 }}>✕</span> {s}
-                      </div>
-                    ))}
-                  </Card>
-                </div>
-
-                {/* Content Mix */}
-                {aiRecs.content_mix_adjustments && (
-                  <Card style={{ marginBottom: 16 }}>
-                    <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, marginBottom: 8 }}>Content Mix Adjustment</h4>
-                    <div style={{ fontSize: 13, color: C.g700, lineHeight: 1.6 }}>{aiRecs.content_mix_adjustments}</div>
-                  </Card>
-                )}
-
-                {/* Growth Prediction */}
-                {aiRecs.growth_prediction && (
-                  <div style={{ padding: 12, background: C.blueLight, borderRadius: 8, marginBottom: 16, display: 'flex', gap: 10, alignItems: 'center' }}>
-                    <span style={{ fontSize: 20 }}>📈</span>
-                    <div style={{ fontSize: 13, color: C.navy, fontWeight: 500 }}>{aiRecs.growth_prediction}</div>
-                  </div>
-                )}
-              </div>
-
-              {/* NEXT PERIOD CONTENT CALENDAR */}
-              {aiRecs.next_period_calendar && (
-                <div style={{ marginBottom: 28 }}>
-                  <h3 style={{ fontSize: 18, fontWeight: 800, color: C.navy, marginBottom: 6, paddingBottom: 8, borderBottom: `3px solid ${C.orange}` }}>Recommended Content Calendar — Next Week</h3>
-                  {aiRecs.next_period_themes && (
-                    <div style={{ fontSize: 13, color: C.g500, marginBottom: 14 }}>
-                      Themes: {aiRecs.next_period_themes.join(' · ')}
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {aiRecs.next_period_calendar.map((day, i) => {
-                      const dayColors = { Monday: C.red, Tuesday: C.orange, Wednesday: C.blue, Thursday: '#8B5CF6', Friday: C.green }
-                      const color = dayColors[day.day] || C.g500
-                      return (
-                        <div key={i} style={{ display: 'flex', gap: 14, padding: 14, borderRadius: 10, background: C.white, border: `1px solid ${C.g200}` }}>
-                          <div style={{ width: 80, flexShrink: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 700, color }}>{day.day}</div>
-                            <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.g100, color: C.g600 }}>{day.type}</span>
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: C.navy, marginBottom: 2 }}>{day.theme}</div>
-                            <div style={{ fontSize: 12, color: C.g500, fontStyle: 'italic' }}>Hook: "{day.hook_suggestion}"</div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          <div style={{ marginTop:28, padding:16, background:C.g50, borderRadius:8, textAlign:'center', fontSize:12, color:C.g400, borderTop:`2px solid ${C.g200}` }}>
-            Confidential — Prepared by DPT Agency — {new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'})}
-          </div>
+          {rWeekly.length===0 && rPosts.length===0 && <EmptyState icon="▤" title="No data" sub="Enter weekly data first" />}
+          <div style={{ padding:14, background:C.g50, borderRadius:8, textAlign:'center', fontSize:12, color:C.g400, borderTop:`2px solid ${C.g200}` }}>Confidential — DPT Agency — {new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'})}</div>
         </div>
         <div style={{ display:'flex', justifyContent:'flex-end', gap:12, marginTop:20, paddingTop:16, borderTop:`1px solid ${C.g200}` }}>
           <Btn v="secondary" onClick={() => setShowReport(false)}>Close</Btn>
-          <Btn v="secondary" onClick={() => window.print()}>Print Preview</Btn>
-          <Btn v="orange" onClick={downloadPdf} disabled={downloadingPdf}>
-            {downloadingPdf ? 'Generating PDF...' : 'Download PDF'}
-          </Btn>
+          <Btn v="secondary" onClick={() => window.print()}>Print</Btn>
+          <Btn v="orange" onClick={async () => {
+            setDownloadingPdf(true); try { const url = import.meta.env.VITE_SUPABASE_URL; const s = (await supabase.auth.getSession()).data.session
+            const res = await fetch(`${url}/functions/v1/generate-report`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${s.access_token}`}, body:JSON.stringify({client:{full_name:client?.full_name,company:client?.company,niche:client?.niche},weeklyData:rWeekly,postsData:rPosts,periodStart:rd.startDate,periodEnd:rd.endDate}) })
+            const d = await res.json(); if(d.pdf){const l=document.createElement('a');l.href=d.pdf;l.download=`Report_${client?.full_name?.replace(/\s+/g,'_')}_${rd.startDate}.pdf`;document.body.appendChild(l);l.click();document.body.removeChild(l)}else alert(d.error||'Failed')
+            }catch(e){alert(`PDF failed: ${e.message}`)} setDownloadingPdf(false)
+          }} disabled={downloadingPdf}>{downloadingPdf ? 'Generating...' : 'Download PDF'}</Btn>
         </div>
       </Modal>
     </div>
