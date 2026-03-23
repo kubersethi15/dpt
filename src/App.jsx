@@ -3430,7 +3430,7 @@ export default function App() {
 
   useEffect(() => {
     if (auth.profile) {
-      setView(auth.profile.role === 'admin' ? 'dashboard' : 'my_dashboard')
+      setView(prev => prev || (auth.profile.role === 'admin' ? 'dashboard' : 'my_dashboard'))
       // Fetch unread notification count
       const fetchUnread = async () => {
         const { count } = await supabase.from('notifications').select('*', { count: 'exact', head: true })
